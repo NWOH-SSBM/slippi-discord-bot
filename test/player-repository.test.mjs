@@ -75,3 +75,11 @@ test('rejects blank Connect Codes and identifiers', () => {
 test('rejects a blank database path', () => {
   assert.throws(() => openDatabase('  '), /Database path/);
 });
+
+test('rejects blank or oversized Connect Codes for lookups and removals', () => {
+  withRepository((players) => {
+    assert.throws(() => players.get('guild-1', ' '), /Connect Code/);
+    assert.throws(() => players.remove('guild-1', ' '), /Connect Code/);
+    assert.throws(() => players.remove('guild-1', 'A'.repeat(33)), /Connect Code/);
+  });
+});

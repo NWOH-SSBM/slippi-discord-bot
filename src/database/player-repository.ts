@@ -64,12 +64,8 @@ export class PlayerRepository {
 
   add(guildId: string, connectCode: string, addedByDiscordUserId: string): AddPlayerResult {
     const normalizedGuildId = normalizeIdentifier(guildId, 'Guild ID');
-    const normalizedConnectCode = normalizeConnectCode(connectCode);
+    const normalizedConnectCode = normalizeStoredConnectCode(connectCode);
     const normalizedActorId = normalizeIdentifier(addedByDiscordUserId, 'Discord user ID');
-
-    if (!normalizedConnectCode || normalizedConnectCode.length > 32) {
-      throw new RangeError('Connect Code must contain between 1 and 32 characters.');
-    }
 
     const result = this.insertStatement.run(
       normalizedGuildId,
@@ -90,14 +86,14 @@ export class PlayerRepository {
 
   get(guildId: string, connectCode: string): PlayerRecord | undefined {
     const normalizedGuildId = normalizeIdentifier(guildId, 'Guild ID');
-    const normalizedConnectCode = normalizeConnectCode(connectCode);
+    const normalizedConnectCode = normalizeStoredConnectCode(connectCode);
 
     return this.getStatement.get(normalizedGuildId, normalizedConnectCode);
   }
 
   remove(guildId: string, connectCode: string): boolean {
     const normalizedGuildId = normalizeIdentifier(guildId, 'Guild ID');
-    const normalizedConnectCode = normalizeConnectCode(connectCode);
+    const normalizedConnectCode = normalizeStoredConnectCode(connectCode);
 
     const result = this.removeStatement.run(normalizedGuildId, normalizedConnectCode);
 
@@ -115,6 +111,16 @@ function normalizeIdentifier(value: string, label: string): string {
 
   if (!normalizedValue || normalizedValue.length > 64) {
     throw new RangeError(`${label} must contain between 1 and 64 characters.`);
+  }
+
+  return normalizedValue;
+}
+
+function normalizeStoredConnectCode(value: string): string {
+  const normalizedValue = normalizeConnectCode(value);
+
+  if (!normalizedValue || normalizedValue.length > 32) {
+    throw new RangeError('Connect Code must contain between 1 and 32 characters.');
   }
 
   return normalizedValue;
