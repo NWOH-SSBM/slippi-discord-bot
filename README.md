@@ -16,29 +16,29 @@ A Discord bot for maintaining and displaying a community leaderboard of Super Sm
 
 ## Initial commands
 
-| Command | Description | Initial access |
-| --- | --- | --- |
-| `/leaderboard` | Display registered players ranked by Slippi rating. | Everyone |
-| `/player add <connect-code>` | Register a Slippi Connect Code. | Everyone |
-| `/player remove <connect-code>` | Remove a registered Connect Code. | Everyone |
+| Command                         | Description                                         | Initial access |
+| ------------------------------- | --------------------------------------------------- | -------------- |
+| `/leaderboard`                  | Display registered players ranked by Slippi rating. | Everyone       |
+| `/player add <connect-code>`    | Register a Slippi Connect Code.                     | Everyone       |
+| `/player remove <connect-code>` | Remove a registered Connect Code.                   | Everyone       |
 
 Command access is intentionally open in the initial release. Authorization should be implemented behind a replaceable policy so that moderator-only restrictions can be added later without rewriting command logic.
 
 ## Architecture decisions
 
-| Concern | Decision |
-| --- | --- |
-| Language | TypeScript |
-| Runtime | Node.js 26 LTS |
-| Discord library | `discord.js` |
-| Discord connection | Gateway connection; slash commands only |
-| Gateway intents | `Guilds` only unless a future feature proves another intent is necessary |
-| Database | SQLite via `better-sqlite3` |
-| Deployment | Docker on Fly.io |
-| Runtime topology | One always-on Machine; no replicas initially |
-| Persistent data | SQLite database on a Fly Volume mounted at `/data` |
-| Command registration | Guild-scoped for the initial community server |
-| License | GNU GPL version 3.0 (GPL-3.0-only) |
+| Concern              | Decision                                                                 |
+| -------------------- | ------------------------------------------------------------------------ |
+| Language             | TypeScript                                                               |
+| Runtime              | Node.js 26 LTS                                                           |
+| Discord library      | `discord.js`                                                             |
+| Discord connection   | Gateway connection; slash commands only                                  |
+| Gateway intents      | `Guilds` only unless a future feature proves another intent is necessary |
+| Database             | SQLite via `better-sqlite3`                                              |
+| Deployment           | Docker on Fly.io                                                         |
+| Runtime topology     | One always-on Machine; no replicas initially                             |
+| Persistent data      | SQLite database on a Fly Volume mounted at `/data`                       |
+| Command registration | Guild-scoped for the initial community server                            |
+| License              | GNU GPL version 3.0 (GPL-3.0-only)                                       |
 
 The bot does not need a public inbound HTTP endpoint. It initiates outbound connections to Discord and Slippi.
 
@@ -86,12 +86,12 @@ Guild commands are preferred during development because updates are available qu
 
 ## Configuration
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `DISCORD_TOKEN` | Yes | Bot token from the Discord Developer Portal. Secret; never commit it. |
-| `DISCORD_CLIENT_ID` | Yes | Discord application ID. |
-| `DISCORD_GUILD_ID` | Yes | Development or production server ID used for guild-scoped command registration. |
-| `DATABASE_PATH` | No | SQLite database path. Defaults to `./data/slippi-discord-bot.sqlite`. |
+| Variable            | Required | Description                                                                     |
+| ------------------- | -------- | ------------------------------------------------------------------------------- |
+| `DISCORD_TOKEN`     | Yes      | Bot token from the Discord Developer Portal. Secret; never commit it.           |
+| `DISCORD_CLIENT_ID` | Yes      | Discord application ID.                                                         |
+| `DISCORD_GUILD_ID`  | Yes      | Development or production server ID used for guild-scoped command registration. |
+| `DATABASE_PATH`     | No       | SQLite database path. Defaults to `./data/slippi-discord-bot.sqlite`.           |
 
 For local development, Node loads `.env` using its built-in `--env-file-if-exists` option through the npm scripts. In production, inject variables through Fly secrets and set `DATABASE_PATH=/data/slippi-discord-bot.sqlite`.
 
