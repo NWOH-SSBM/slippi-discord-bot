@@ -13,4 +13,6 @@ export const config = Object.freeze({
   discordClientId: requiredEnvironmentVariable('DISCORD_CLIENT_ID'),
   discordGuildId: requiredEnvironmentVariable('DISCORD_GUILD_ID'),
   databasePath: process.env.DATABASE_PATH?.trim() || './data/slippi-discord-bot.sqlite',
+  slippiGraphqlEndpoint:
+    process.env.SLIPPI_GRAPHQL_ENDPOINT?.trim() || 'https://internal.slippi.gg',
 });

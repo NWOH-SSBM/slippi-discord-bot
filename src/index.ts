@@ -1,11 +1,13 @@
 import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
-import { config } from './config.js';
 import { handlePlayerCommand } from './commands/player.js';
+import { config } from './config.js';
 import { openDatabase } from './database/database.js';
 import { PlayerRepository } from './database/player-repository.js';
+import { SlippiClient } from './services/slippi-client.js';
 
 const database = openDatabase(config.databasePath);
 const players = new PlayerRepository(database);
+const slippi = new SlippiClient({ endpoint: config.slippiGraphqlEndpoint });
 
 const client = new Client({
   // Slash commands only require the Guilds intent. Add other intents only when
@@ -30,7 +32,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     switch (interaction.commandName) {
       case 'player':
-        await handlePlayerCommand(interaction, players);
+        await handlePlayerCommand(interaction, players, slippi);
         break;
 
       case 'leaderboard':

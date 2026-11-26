@@ -1,16 +1,18 @@
 import { MessageFlags, type ChatInputCommandInteraction } from 'discord.js';
 import type { PlayerRepository } from '../database/player-repository.js';
-import { normalizeConnectCode } from '../domain/connect-code.js';
+import { isValidConnectCode, normalizeConnectCode } from '../domain/connect-code.js';
+import { SlippiApiError, type SlippiClient } from '../services/slippi-client.js';
 
 /**
  * Handle the /player command family.
  *
  * The response is public so roster changes are visible to the community.
- * The repository also records the Discord user ID responsible for each add.
+ * The repository records the Discord user ID responsible for each add.
  */
 export async function handlePlayerCommand(
   interaction: ChatInputCommandInteraction,
   players: PlayerRepository,
+  slippi: SlippiClient,
 ): Promise<void> {
   const guildId = interaction.guildId;
 
@@ -24,46 +26,74 @@ export async function handlePlayerCommand(
   }
 
   const subcommand = interaction.options.getSubcommand();
-  const connectCode = interaction.options.getString('connect-code', true);
+  const connectCode = normalizeConnectCode(interaction.options.getString('connect-code', true));
 
-  // Acknowledge before performing database operations, leaving room for future
-  // validation against Slippi without risking Discord's interaction deadline.
+  // Validate syntax before looking up or persisting a user-supplied value.
+  if (!isValidConnectCode(connectCode)) {
+    await interaction.reply({
+      content: 'Invalid Connect Code. Use the format `ABCD#123` (1–7 letters, #, 1–7 digits).',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  // Acknowledge before any network operation to stay within Discord's
+  // interaction response deadline.
   await interaction.deferReply();
 
   let response: string;
 
-  try {
-    switch (subcommand) {
-      case 'add': {
-        const result = players.add(guildId, connectCode, interaction.user.id);
+  switch (subcommand) {
+    case 'add': {
+      // Avoid an API request when the player is already registered. The
+      // repository still handles the race where two adds happen concurrently.
+      const existingPlayer = players.get(guildId, connectCode);
 
+      if (existingPlayer) {
+        response = `${existingPlayer.connectCode} is already registered on this server's leaderboard.`;
+        break;
+      }
+
+      let slippiPlayer: Awaited<ReturnType<SlippiClient['getPlayer']>>;
+
+      try {
+        slippiPlayer = await slippi.getPlayer(connectCode);
+      } catch (error) {
+        if (!(error instanceof SlippiApiError)) {
+          throw error;
+        }
+
+        console.error('Slippi player verification failed:', error);
         response =
-          result.status === 'added'
-            ? `Added ${result.player.connectCode} to this server's leaderboard.`
-            : `${result.player.connectCode} is already registered on this server's leaderboard.`;
+          'Slippi is temporarily unavailable, so the player could not be verified. No changes were made. Please try again later.';
         break;
       }
 
-      case 'remove': {
-        const normalizedConnectCode = normalizeConnectCode(connectCode);
-        const removed = players.remove(guildId, normalizedConnectCode);
-
-        const playerLabel = normalizedConnectCode || 'That Connect Code';
-        response = removed
-          ? `Removed ${playerLabel} from this server's leaderboard.`
-          : `${playerLabel} is not registered on this server's leaderboard.`;
+      if (!slippiPlayer) {
+        response = `Slippi could not find a profile for ${connectCode}. Check the Connect Code and try again. Nothing was added.`;
         break;
       }
 
-      default:
-        response = 'Unknown player command.';
+      const result = players.add(guildId, connectCode, interaction.user.id);
+
+      response =
+        result.status === 'added'
+          ? `Added ${result.player.connectCode} (${slippiPlayer.displayName}) to this server's leaderboard.`
+          : `${result.player.connectCode} is already registered on this server's leaderboard.`;
+      break;
     }
-  } catch (error) {
-    if (error instanceof RangeError) {
-      response = `Invalid Connect Code: ${error.message}`;
-    } else {
-      throw error;
+
+    case 'remove': {
+      const removed = players.remove(guildId, connectCode);
+
+      response = removed
+        ? `Removed ${connectCode} from this server's leaderboard.`
+        : `${connectCode} is not registered on this server's leaderboard.`;
+      break;
     }
+
+    default:
+      response = 'Unknown player command.';
   }
 
   // Connect Codes are user input. Disable mention parsing so an unexpected
