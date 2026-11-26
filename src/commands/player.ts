@@ -1,5 +1,6 @@
 import { MessageFlags, type ChatInputCommandInteraction } from 'discord.js';
 import type { PlayerRepository } from '../database/player-repository.js';
+import type { ProfileCacheRepository } from '../database/profile-cache-repository.js';
 import { isValidConnectCode, normalizeConnectCode } from '../domain/connect-code.js';
 import { SlippiApiError, type SlippiClient } from '../services/slippi-client.js';
 
@@ -12,6 +13,7 @@ import { SlippiApiError, type SlippiClient } from '../services/slippi-client.js'
 export async function handlePlayerCommand(
   interaction: ChatInputCommandInteraction,
   players: PlayerRepository,
+  profiles: ProfileCacheRepository,
   slippi: SlippiClient,
 ): Promise<void> {
   const guildId = interaction.guildId;
@@ -31,7 +33,8 @@ export async function handlePlayerCommand(
   // Validate syntax before looking up or persisting a user-supplied value.
   if (!isValidConnectCode(connectCode)) {
     await interaction.reply({
-      content: 'Invalid Connect Code. Use the format `ABCD#123` (1–7 letters, #, 1–7 digits).',
+      content:
+        'Invalid Connect Code. Use `ABCD#123`, `ABCD 123`, or `ABCD-123` (1–7 letters and 1–7 digits).',
       flags: MessageFlags.Ephemeral,
     });
     return;
@@ -73,6 +76,10 @@ export async function handlePlayerCommand(
         response = `Slippi could not find a profile for ${connectCode}. Check the Connect Code and try again. Nothing was added.`;
         break;
       }
+
+      // Store the successful lookup so the first leaderboard request can use
+      // persistent data without immediately querying Slippi again.
+      profiles.upsert(slippiPlayer);
 
       const result = players.add(guildId, connectCode, interaction.user.id);
 

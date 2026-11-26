@@ -20,7 +20,12 @@ and response parser in `src/services/slippi-client.ts`.
 - HTTP, network, timeout, GraphQL, and malformed-response failures throw
   `SlippiApiError`; callers must not treat these as a missing player.
 - Ranked fields are nullable because an account may exist without a current
-  ranked profile.
+  ranked profile. The client requests `ratingOrdinal`, `ratingUpdateCount`,
+  `wins`, `losses`, `dailyGlobalPlacement`, `dailyRegionalPlacement`, and
+  `continent` from `rankedNetplayProfile`.
+- Ranked counters and placement values are validated as non-negative or
+  positive integers; ratings must be finite and non-negative. An unexpected
+  payload shape is treated as an API error rather than a missing player.
 - Requests are serialized and spaced at least one second apart by default.
 - Successful lookups and not-found results are cached for five minutes in
   process memory. Errors are not cached.
@@ -30,4 +35,12 @@ and response parser in `src/services/slippi-client.ts`.
 Do not automatically remove roster entries when a lookup fails or returns no
 profile. A temporary API outage must never be interpreted as an empty roster.
 The current `/player add` flow only persists a new entry after Slippi has
-confirmed that a profile exists.
+confirmed that a profile exists. On success, its profile is also written to the
+persistent SQLite profile cache so the leaderboard can use it without an
+immediate second API request.
+
+The leaderboard refreshes missing or 30-minute-stale profiles sequentially.
+The default client spacing is one request per second. Successful profiles are
+stored in the global `slippi_profiles` cache; registrations remain scoped by
+Discord guild. API failures stop that refresh pass and never overwrite cached
+profiles or delete registrations.

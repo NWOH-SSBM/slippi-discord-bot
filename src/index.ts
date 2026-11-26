@@ -1,13 +1,18 @@
 import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
+import { handleLeaderboardCommand } from './commands/leaderboard.js';
 import { handlePlayerCommand } from './commands/player.js';
 import { config } from './config.js';
 import { openDatabase } from './database/database.js';
 import { PlayerRepository } from './database/player-repository.js';
+import { ProfileCacheRepository } from './database/profile-cache-repository.js';
+import { LeaderboardService } from './services/leaderboard-service.js';
 import { SlippiClient } from './services/slippi-client.js';
 
 const database = openDatabase(config.databasePath);
 const players = new PlayerRepository(database);
+const profiles = new ProfileCacheRepository(database);
 const slippi = new SlippiClient({ endpoint: config.slippiGraphqlEndpoint });
+const leaderboard = new LeaderboardService(players, profiles, slippi);
 
 const client = new Client({
   // Slash commands only require the Guilds intent. Add other intents only when
@@ -32,15 +37,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     switch (interaction.commandName) {
       case 'player':
-        await handlePlayerCommand(interaction, players, slippi);
+        await handlePlayerCommand(interaction, players, profiles, slippi);
         break;
 
       case 'leaderboard':
-        await interaction.reply({
-          content:
-            'Leaderboard retrieval is not implemented yet. Player registration is now persistent.',
-          flags: MessageFlags.Ephemeral,
-        });
+        await handleLeaderboardCommand(interaction, leaderboard);
         break;
 
       default:

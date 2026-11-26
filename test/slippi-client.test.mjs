@@ -9,8 +9,12 @@ const validProfile = {
       connectCode: { code: 'MANG#0' },
       rankedNetplayProfile: {
         ratingOrdinal: 2310.5,
+        ratingUpdateCount: 200,
         wins: 120,
         losses: 80,
+        dailyGlobalPlacement: 147,
+        dailyRegionalPlacement: 39,
+        continent: 'North America',
       },
     },
   },
@@ -44,14 +48,19 @@ test('looks up a player and maps the Slippi profile fields', async () => {
 
   const requestBody = JSON.parse(requestOptions.body);
   assert.equal(requestBody.operationName, 'UserProfilePageQuery');
+  assert.match(requestBody.query, /dailyGlobalPlacement/);
   assert.deepEqual(requestBody.variables, { cc: 'MANG#0', uid: 'MANG#0' });
 
   assert.deepEqual(player, {
     connectCode: 'MANG#0',
     displayName: 'Mango',
     rating: 2310.5,
+    ratingUpdateCount: 200,
     wins: 120,
     losses: 80,
+    dailyGlobalPlacement: 147,
+    dailyRegionalPlacement: 39,
+    continent: 'North America',
   });
 });
 
@@ -82,8 +91,12 @@ test('returns a profile without ranked data', async () => {
     connectCode: 'NEW#123',
     displayName: 'New Player',
     rating: null,
+    ratingUpdateCount: null,
     wins: null,
     losses: null,
+    dailyGlobalPlacement: null,
+    dailyRegionalPlacement: null,
+    continent: null,
   });
 });
 
@@ -235,4 +248,29 @@ test('converts an aborted request into a timeout API error', async () => {
     () => client.getPlayer('MANG#0'),
     (error) => error instanceof SlippiApiError && /timed out/.test(error.message),
   );
+});
+
+test('rejects invalid negative or fractional ranked counters', async () => {
+  const client = new SlippiClient({
+    requestIntervalMs: 0,
+    fetchImplementation: async () =>
+      jsonResponse({
+        data: {
+          getUser: {
+            displayName: 'Invalid Data',
+            rankedNetplayProfile: {
+              ratingOrdinal: 1500,
+              ratingUpdateCount: 10.5,
+              wins: 10,
+              losses: 5,
+              dailyGlobalPlacement: null,
+              dailyRegionalPlacement: null,
+              continent: 'North America',
+            },
+          },
+        },
+      }),
+  });
+
+  await assert.rejects(() => client.getPlayer('BAD#123'), SlippiApiError);
 });
