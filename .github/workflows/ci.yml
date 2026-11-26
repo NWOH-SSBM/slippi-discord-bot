@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,6 +14,7 @@ jobs:
   quality:
     name: quality
     runs-on: ubuntu-latest
+
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -37,3 +39,40 @@ jobs:
 
       - name: Audit dependencies
         run: npm audit --audit-level=high
+
+  deploy:
+    name: Deploy to Fly.io
+    needs: quality
+
+    # Deploy only after successful quality checks on main.
+    if: >-
+      needs.quality.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch')
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    environment:
+      name: production
+
+    concurrency:
+      group: fly-production
+      cancel-in-progress: false
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@v1.5
+        with:
+          version: 0.5.18
+
+      - name: Deploy application
+        run: flyctl deploy --remote-only --app nwoh-slippi-discord-bot-prod
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
