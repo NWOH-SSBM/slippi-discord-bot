@@ -16,7 +16,9 @@
     "commands:register": "tsx --env-file-if-exists=.env src/register-commands.ts",
     "test": "npm run build && node --test",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "assets:import": "node scripts/import-rank-assets.mjs",
+    "emojis:sync": "node --env-file-if-exists=.env scripts/sync-application-emojis.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",
@@ -27,7 +29,8 @@
     "@types/node": "^26.0.0",
     "prettier": "3.10.1",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "sharp": "^0.35.5"
   },
   "allowScripts": {
     "better-sqlite3@13.2.0": true,

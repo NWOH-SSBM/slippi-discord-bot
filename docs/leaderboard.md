@@ -101,10 +101,16 @@ Entries are ordered by:
 3. Display name alphabetically, case-insensitively.
 4. Connect Code alphabetically as a deterministic final tie-breaker.
 
-The Discord command displays 20 entries per page. Pagination buttons are
-restricted to the user who invoked the command and expire after two minutes.
-The bot requires the Discord **Embed Links** permission in addition to **Send
-Messages** to publish the leaderboard embeds.
+Both `/leaderboard` and `/leaderboard-compact` display 20 entries per page and
+use the same `LeaderboardService` snapshot and ordering. The rich command uses
+Discord Components V2 with rank artwork, Connect Codes, and clickable Slippi
+profile names. The compact command uses a monospaced text-only table.
+
+Pagination buttons are restricted to the user who invoked the command. They
+use a process-local session store with a 30-minute inactivity expiry rather
+than temporary per-message collectors. See
+[leaderboard presentation](leaderboard-presentation.md) for the interaction
+lifecycle, expiry behavior, rank emoji synchronization, and rendering details.
 
 ## Connect Code input
 

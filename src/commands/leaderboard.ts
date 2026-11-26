@@ -2,24 +2,158 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ComponentType,
-  EmbedBuilder,
+  ContainerBuilder,
   MessageFlags,
+  TextDisplayBuilder,
+  type ButtonInteraction,
   type ChatInputCommandInteraction,
 } from 'discord.js';
+import type { LeaderboardSnapshot, LeaderboardService } from '../services/leaderboard-service.js';
+import { LEADERBOARD_PAGE_SIZE } from '../domain/leaderboard.js';
+import {
+  createLeaderboardButtonCustomId,
+  isLegacyLeaderboardButtonCustomId,
+  parseLeaderboardButtonCustomId,
+} from '../domain/leaderboard-pagination.js';
+import {
+  formatCompactLeaderboardPage,
+  formatRichLeaderboardPage,
+} from '../presentation/leaderboard-format.js';
 import type {
-  LeaderboardEntry,
-  LeaderboardSnapshot,
-  LeaderboardService,
-} from '../services/leaderboard-service.js';
+  LeaderboardFormat,
+  LeaderboardSessionStore,
+} from '../services/leaderboard-session-store.js';
 
-const PAGE_SIZE = 20;
-const COLLECTOR_TIMEOUT_MS = 2 * 60 * 1_000;
+const COMPONENT_ACCENT_COLOR = 0x5865f2;
+const NO_PLAYERS_MESSAGE = 'No players are registered yet. Add someone with `/player add`.';
+const EXPIRED_SESSION_MESSAGE =
+  'This leaderboard has expired or the bot has restarted. Run `/leaderboard` or ' +
+  '`/leaderboard-compact` again to create a new one.';
 
-/** Handle /leaderboard and provide button-based pagination when needed. */
+/** Handle the rich, badge-oriented /leaderboard command. */
 export async function handleLeaderboardCommand(
   interaction: ChatInputCommandInteraction,
   leaderboard: LeaderboardService,
+  sessions: LeaderboardSessionStore,
+  applicationEmojiTags: ReadonlyMap<string, string>,
+): Promise<void> {
+  await handleLeaderboard(interaction, leaderboard, sessions, applicationEmojiTags, 'rich');
+}
+
+/** Handle the compact, monospaced /leaderboard-compact command. */
+export async function handleCompactLeaderboardCommand(
+  interaction: ChatInputCommandInteraction,
+  leaderboard: LeaderboardService,
+  sessions: LeaderboardSessionStore,
+): Promise<void> {
+  await handleLeaderboard(interaction, leaderboard, sessions, new Map(), 'compact');
+}
+
+/**
+ * Handle leaderboard pagination globally. This deliberately does not use a
+ * MessageComponentCollector: the interactionCreate listener stays active for
+ * the lifetime of the bot and explicitly acknowledges stale buttons.
+ */
+export async function handleLeaderboardButtonInteraction(
+  interaction: ButtonInteraction,
+  sessions: LeaderboardSessionStore,
+  applicationEmojiTags: ReadonlyMap<string, string>,
+): Promise<void> {
+  if (isLegacyLeaderboardButtonCustomId(interaction.customId)) {
+    await expireLeaderboardMessage(interaction);
+    return;
+  }
+
+  const parsedButton = parseLeaderboardButtonCustomId(interaction.customId);
+
+  if (!parsedButton) {
+    await expireLeaderboardMessage(interaction);
+    return;
+  }
+
+  const { sessionId, action } = parsedButton;
+  const session = sessions.get(sessionId);
+
+  if (!session) {
+    await expireLeaderboardMessage(interaction);
+    return;
+  }
+
+  if (interaction.user.id !== session.ownerUserId) {
+    await replyEphemeral(
+      interaction,
+      'Only the person who requested this leaderboard can change its pages.',
+    );
+    return;
+  }
+
+  const nextPage =
+    action === 'previous'
+      ? Math.max(0, session.pageIndex - 1)
+      : Math.min(session.pageCount - 1, session.pageIndex + 1);
+
+  if (nextPage === session.pageIndex) {
+    await replyEphemeral(
+      interaction,
+      'You are already at the beginning or end of this leaderboard.',
+    );
+    return;
+  }
+
+  try {
+    if (session.format === 'rich') {
+      await interaction.update({
+        components: createRichComponents(
+          session.snapshot,
+          nextPage,
+          session.pageCount,
+          session.id,
+          applicationEmojiTags,
+        ),
+        allowedMentions: { parse: [] },
+      });
+    } else {
+      await interaction.update({
+        content: formatCompactLeaderboardPage(session.snapshot, {
+          pageIndex: nextPage,
+          pageCount: session.pageCount,
+        }),
+        embeds: [],
+        components: createPaginationComponents(session.id, nextPage, session.pageCount),
+        allowedMentions: { parse: [] },
+      });
+    }
+
+    sessions.setPage(session.id, nextPage);
+  } catch (error) {
+    console.error('Could not update leaderboard pagination:', error);
+    sessions.delete(session.id);
+
+    // If the source message is inaccessible, try to acknowledge the click
+    // with a private explanation instead of leaving Discord to show a timeout.
+    await expireLeaderboardMessage(
+      interaction,
+      'I could not update that leaderboard message. Run `/leaderboard` again for a fresh one.',
+    );
+  }
+}
+
+async function expireLeaderboardMessage(
+  interaction: ButtonInteraction,
+  explanation = EXPIRED_SESSION_MESSAGE,
+): Promise<void> {
+  // Acknowledge the button click immediately. Do not attempt to edit the
+  // original message: it may be an old Components V2 message that the bot
+  // can no longer edit.
+  await replyEphemeral(interaction, explanation);
+}
+
+async function handleLeaderboard(
+  interaction: ChatInputCommandInteraction,
+  leaderboard: LeaderboardService,
+  sessions: LeaderboardSessionStore,
+  applicationEmojiTags: ReadonlyMap<string, string>,
+  format: LeaderboardFormat,
 ): Promise<void> {
   const guildId = interaction.guildId;
 
@@ -45,7 +179,7 @@ export async function handleLeaderboardCommand(
 
   if (snapshot.registeredPlayerCount === 0) {
     await interaction.editReply({
-      content: 'No players are registered yet. Add someone with `/player add`.',
+      content: NO_PLAYERS_MESSAGE,
       embeds: [],
       components: [],
       allowedMentions: { parse: [] },
@@ -53,128 +187,52 @@ export async function handleLeaderboardCommand(
     return;
   }
 
-  const pages = createPages(snapshot);
-  let currentPage = 0;
+  const pageCount = Math.ceil(snapshot.entries.length / LEADERBOARD_PAGE_SIZE);
+  const session = sessions.create(interaction.user.id, format, snapshot);
+  const sessionId = session?.id ?? 'single-page';
 
-  const message = await interaction.editReply({
-    content: null,
-    embeds: [pages[currentPage]!],
-    components: createPaginationComponents(currentPage, pages.length),
-    allowedMentions: { parse: [] },
-  });
-
-  if (pages.length <= 1) {
-    return;
-  }
-
-  const collector = message.createMessageComponentCollector({
-    componentType: ComponentType.Button,
-    time: COLLECTOR_TIMEOUT_MS,
-  });
-
-  collector.on('collect', async (buttonInteraction) => {
-    if (buttonInteraction.user.id !== interaction.user.id) {
-      await buttonInteraction.reply({
-        content: 'Only the person who requested this leaderboard can change pages.',
-        flags: MessageFlags.Ephemeral,
-      });
-      return;
-    }
-
-    if (buttonInteraction.customId === 'leaderboard:previous') {
-      currentPage = Math.max(0, currentPage - 1);
-    } else if (buttonInteraction.customId === 'leaderboard:next') {
-      currentPage = Math.min(pages.length - 1, currentPage + 1);
-    }
-
-    await buttonInteraction.update({
-      embeds: [pages[currentPage]!],
-      components: createPaginationComponents(currentPage, pages.length),
+  if (format === 'rich') {
+    await interaction.editReply({
+      content: null,
+      embeds: [],
+      components: createRichComponents(snapshot, 0, pageCount, sessionId, applicationEmojiTags),
+      flags: MessageFlags.IsComponentsV2,
       allowedMentions: { parse: [] },
     });
-  });
-
-  collector.on('end', async () => {
-    try {
-      await message.edit({ components: [] });
-    } catch (error) {
-      console.warn('Could not remove expired leaderboard pagination buttons:', error);
-    }
-  });
+  } else {
+    await interaction.editReply({
+      content: formatCompactLeaderboardPage(snapshot, { pageIndex: 0, pageCount }),
+      embeds: [],
+      components: session ? createPaginationComponents(session.id, 0, pageCount) : [],
+      allowedMentions: { parse: [] },
+    });
+  }
 }
 
-export function createPages(snapshot: LeaderboardSnapshot): EmbedBuilder[] {
-  const pageCount = Math.ceil(snapshot.entries.length / PAGE_SIZE);
-
-  return Array.from({ length: pageCount }, (_, pageIndex) => {
-    const pageEntries = snapshot.entries.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
-
-    const description = [
-      ...buildStatusLines(snapshot),
-      '**# · Player · Rank · Rating · Record**',
-      ...pageEntries.map((entry, index) =>
-        formatLeaderboardEntry(entry, pageIndex * PAGE_SIZE + index + 1),
+function createRichComponents(
+  snapshot: LeaderboardSnapshot,
+  pageIndex: number,
+  pageCount: number,
+  sessionId: string,
+  applicationEmojiTags: ReadonlyMap<string, string>,
+): (ContainerBuilder | ActionRowBuilder<ButtonBuilder>)[] {
+  const container = new ContainerBuilder()
+    .setAccentColor(COMPONENT_ACCENT_COLOR)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        formatRichLeaderboardPage(snapshot, {
+          pageIndex,
+          pageCount,
+          applicationEmojiTags,
+        }),
       ),
-    ].join('\n');
-
-    return new EmbedBuilder()
-      .setTitle('Slippi Leaderboard')
-      .setDescription(description)
-      .setFooter({
-        text: `Page ${pageIndex + 1} of ${pageCount} · ${formatOldestProfileDate(snapshot)}`,
-      });
-  });
-}
-
-function buildStatusLines(snapshot: LeaderboardSnapshot): string[] {
-  const lines: string[] = [];
-
-  if (snapshot.apiUnavailable) {
-    lines.push(
-      '⚠️ Slippi is temporarily unavailable. Showing the last successfully cached profile data where available.',
     );
-  }
 
-  if (snapshot.missingProfileCount > 0) {
-    lines.push(`ℹ️ ${snapshot.missingProfileCount} player profile(s) do not have cached data yet.`);
-  }
-
-  if (snapshot.notFoundProfileCount > 0) {
-    lines.push(
-      `ℹ️ Slippi did not return ${snapshot.notFoundProfileCount} profile(s); roster registrations were retained.`,
-    );
-  }
-
-  if (snapshot.staleProfileCount > 0 && !snapshot.apiUnavailable) {
-    lines.push(
-      `ℹ️ ${snapshot.staleProfileCount} cached profile(s) are older than the refresh interval.`,
-    );
-  }
-
-  if (snapshot.refreshedProfileCount > 0) {
-    lines.push(`Updated ${snapshot.refreshedProfileCount} player profile(s) from Slippi.`);
-  }
-
-  return lines.length > 0 ? [...lines, ''] : [];
-}
-
-function formatLeaderboardEntry(entry: LeaderboardEntry, position: number): string {
-  const name = escapeMarkdown(
-    (entry.profile?.displayName ?? entry.registration.connectCode).slice(0, 48),
-  );
-  const rating = entry.profile?.rating;
-  const ratingText = rating === null || rating === undefined ? '—' : formatRating(rating);
-  const wins = entry.profile?.wins;
-  const losses = entry.profile?.losses;
-  const record =
-    wins === null || wins === undefined || losses === null || losses === undefined
-      ? '—'
-      : `${wins}W/${losses}L`;
-
-  return `\`${String(position).padStart(2, '0')}\` **${name}** · **${entry.rank}** · ${ratingText} · ${record}`;
+  return [container, ...createPaginationComponents(sessionId, pageIndex, pageCount)];
 }
 
 function createPaginationComponents(
+  sessionId: string,
   currentPage: number,
   pageCount: number,
 ): ActionRowBuilder<ButtonBuilder>[] {
@@ -185,12 +243,12 @@ function createPaginationComponents(
   return [
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
-        .setCustomId('leaderboard:previous')
+        .setCustomId(createLeaderboardButtonCustomId(sessionId, 'previous'))
         .setLabel('Previous')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(currentPage === 0),
       new ButtonBuilder()
-        .setCustomId('leaderboard:next')
+        .setCustomId(createLeaderboardButtonCustomId(sessionId, 'next'))
         .setLabel('Next')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(currentPage === pageCount - 1),
@@ -198,34 +256,22 @@ function createPaginationComponents(
   ];
 }
 
-function formatOldestProfileDate(snapshot: LeaderboardSnapshot): string {
-  const timestamps = snapshot.entries
-    .map((entry) => (entry.profile ? Date.parse(entry.profile.fetchedAt) : Number.NaN))
-    .filter(Number.isFinite);
-
-  if (timestamps.length === 0) {
-    return 'No profile data cached';
+async function replyEphemeral(interaction: ButtonInteraction, content: string): Promise<void> {
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.followUp({
+        content,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    } else {
+      await interaction.reply({
+        content,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
+    }
+  } catch (error) {
+    console.error('Could not acknowledge leaderboard button interaction:', error);
   }
-
-  const oldestTimestamp = Math.min(...timestamps);
-  const formatted = new Intl.DateTimeFormat('en-US', {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'UTC',
-  }).format(oldestTimestamp);
-
-  return `Oldest profile refresh: ${formatted} UTC`;
-}
-
-function formatRating(rating: number): string {
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 1,
-    maximumFractionDigits: 1,
-  }).format(rating);
-}
-
-function escapeMarkdown(value: string): string {
-  // Display names are supplied by Slippi profiles. Escape Markdown controls
-  // so a name cannot inject links, formatting, or block structure into embeds.
-  return value.replace(/[\r\n]/g, ' ').replace(/([\\`*_~|>\[\]()])/g, '\\$1');
 }

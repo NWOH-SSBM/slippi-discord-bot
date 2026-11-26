@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createPages } from '../dist/commands/leaderboard.js';
+import {
+  formatCompactLeaderboardPage,
+  formatRichLeaderboardPage,
+} from '../dist/presentation/leaderboard-format.js';
+import { getRankEmojiTag } from '../dist/presentation/rank-emojis.js';
 
 function entry(position, overrides = {}) {
   const connectCode = `CODE#${position}`;
@@ -28,69 +32,105 @@ function entry(position, overrides = {}) {
   };
 }
 
-test('creates one leaderboard embed for up to twenty players', () => {
-  const pages = createPages({
-    entries: [entry(1), entry(2)],
-    registeredPlayerCount: 2,
-    refreshedProfileCount: 2,
+function snapshot(entries, overrides = {}) {
+  return {
+    entries,
+    registeredPlayerCount: entries.length,
+    refreshedProfileCount: entries.length,
     notFoundProfileCount: 0,
     staleProfileCount: 0,
     missingProfileCount: 0,
     apiUnavailable: false,
+    ...overrides,
+  };
+}
+
+test('rich leaderboard shows rank emoji, clickable profile, Connect Code, rating, and record', () => {
+  const text = formatRichLeaderboardPage(snapshot([entry(1)]), {
+    pageIndex: 0,
+    pageCount: 1,
+    applicationEmojiTags: new Map([['rank_gold_1', '<:rank_gold_1:123456>']]),
   });
 
-  assert.equal(pages.length, 1);
-  assert.equal(pages[0].data.title, 'Slippi Leaderboard');
-  assert.match(pages[0].data.description, /Player 1/);
-  assert.match(pages[0].data.description, /Gold 1/);
-  assert.match(pages[0].data.description, /1,501\.0/);
+  assert.match(text, /<:rank_gold_1:123456>/);
+  assert.match(text, /\[Player 1\]\(https:\/\/slippi\.gg\/user\/code-1\)/);
+  assert.match(text, /`CODE#1`/);
+  assert.match(text, /Gold 1/);
+  assert.match(text, /1,501\.0 rating/);
+  assert.match(text, /10W \/ 5L/);
 });
 
-test('splits larger leaderboards into pages of twenty', () => {
-  const pages = createPages({
-    entries: Array.from({ length: 21 }, (_, index) => entry(index + 1)),
-    registeredPlayerCount: 21,
-    refreshedProfileCount: 21,
-    notFoundProfileCount: 0,
-    staleProfileCount: 0,
-    missingProfileCount: 0,
-    apiUnavailable: false,
+test('rich leaderboard safely escapes profile names before inserting them into a Markdown link', () => {
+  const maliciousName = 'Bad](https://bad.io) @everyone';
+  const text = formatRichLeaderboardPage(
+    snapshot([entry(1, { profile: { ...entry(1).profile, displayName: maliciousName } })]),
+    { pageIndex: 0, pageCount: 1 },
+  );
+
+  assert.ok(text.includes('Bad\\]\\(https://bad.io\\)'));
+  assert.match(text, /@every/);
+});
+
+test('compact leaderboard renders a fixed-width text-only table', () => {
+  const text = formatCompactLeaderboardPage(snapshot([entry(1)]), {
+    pageIndex: 0,
+    pageCount: 1,
   });
 
-  assert.equal(pages.length, 2);
-  assert.match(pages[0].data.footer.text, /Page 1 of 2/);
-  assert.match(pages[1].data.footer.text, /Page 2 of 2/);
-  assert.match(pages[0].data.description, /Player 20/);
-  assert.doesNotMatch(pages[0].data.description, /Player 21/);
-  assert.match(pages[1].data.description, /Player 21/);
+  assert.match(text, /```text/);
+  assert.match(text, /PLAYER\s+RANK\s+RATING\s+W\/L/);
+  assert.match(text, /Player 1/);
+  assert.match(text, /Gold 1/);
+  assert.match(text, /CODE#1/);
+  assert.match(text, /1,501\.0/);
+  assert.match(text, /10\/5/);
+  assert.match(text, /↳ CODE#1/);
+  assert.doesNotMatch(text, /<:rank_/);
+
+  const tableLines = text.split('```text\n')[1].split('\n```')[0].split('\n');
+  const dataLines = tableLines.filter((line) => /^\s*\d{2,3}\s/.test(line));
+  assert.ok(dataLines.every((line) => line.length === tableLines[0].length));
 });
 
-test('communicates cached data and Slippi outage state', () => {
-  const pages = createPages({
-    entries: [entry(1)],
-    registeredPlayerCount: 1,
+test('both leaderboard formats page twenty entries at a time', () => {
+  const data = snapshot(Array.from({ length: 21 }, (_, index) => entry(index + 1)));
+  const firstRichPage = formatRichLeaderboardPage(data, { pageIndex: 0, pageCount: 2 });
+  const secondRichPage = formatRichLeaderboardPage(data, { pageIndex: 1, pageCount: 2 });
+  const firstCompactPage = formatCompactLeaderboardPage(data, { pageIndex: 0, pageCount: 2 });
+  const secondCompactPage = formatCompactLeaderboardPage(data, { pageIndex: 1, pageCount: 2 });
+
+  assert.match(firstRichPage, /Page 1 of 2/);
+  assert.match(secondRichPage, /Page 2 of 2/);
+  assert.match(firstRichPage, /Player 20/);
+  assert.doesNotMatch(firstRichPage, /Player 21/);
+  assert.match(secondRichPage, /Player 21/);
+  assert.match(firstCompactPage, /Page 1 of 2/);
+  assert.doesNotMatch(firstCompactPage, /Player 21/);
+  assert.match(secondCompactPage, /Player 21/);
+});
+
+test('communicates cached data and Slippi outage state in both formats', () => {
+  const data = snapshot([entry(1)], {
     refreshedProfileCount: 0,
-    notFoundProfileCount: 0,
     staleProfileCount: 1,
-    missingProfileCount: 0,
     apiUnavailable: true,
   });
 
-  assert.match(pages[0].data.description, /Slippi is temporarily unavailable/);
-  assert.match(pages[0].data.description, /last successfully cached/);
+  const rich = formatRichLeaderboardPage(data, { pageIndex: 0, pageCount: 1 });
+  const compact = formatCompactLeaderboardPage(data, { pageIndex: 0, pageCount: 1 });
+
+  assert.match(rich, /Slippi is temporarily unavailable/);
+  assert.match(compact, /Slippi is temporarily unavailable/);
+  assert.match(rich, /last successfully cached profile data/);
+  assert.match(compact, /last successfully cached profiles where available/);
 });
 
-test('formats the rank prominently and shows stale-cache status', () => {
-  const pages = createPages({
-    entries: [entry(1)],
-    registeredPlayerCount: 1,
-    refreshedProfileCount: 0,
-    notFoundProfileCount: 0,
-    staleProfileCount: 1,
-    missingProfileCount: 0,
-    apiUnavailable: false,
-  });
+test('pending and unranked states use distinct application rank badges', () => {
+  const emojis = new Map([
+    ['rank_pending', '<:rank_pending:111>'],
+    ['rank_unranked', '<:rank_unranked:222>'],
+  ]);
 
-  assert.match(pages[0].data.description, /\*\*Gold 1\*\*/);
-  assert.match(pages[0].data.description, /older than the refresh interval/);
+  assert.equal(getRankEmojiTag('Pending', emojis), '<:rank_pending:111>');
+  assert.equal(getRankEmojiTag('Unranked', emojis), '<:rank_unranked:222>');
 });

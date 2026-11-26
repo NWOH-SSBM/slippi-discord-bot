@@ -1,0 +1,4 @@
+# Preserve imported upstream artwork exactly as sourced.
+assets/ranks/source-svg/**
+assets/ranks/png/**
+assets/ranks/UPSTREAM-LICENSE-GPL-3.0.txt
