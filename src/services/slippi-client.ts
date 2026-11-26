@@ -1,4 +1,5 @@
-import { normalizeConnectCode } from '../domain/connect-code.js';
+import { isValidConnectCode, normalizeConnectCode } from '../domain/connect-code.js';
+import type { PlayerProfile } from '../domain/player-profile.js';
 
 const DEFAULT_ENDPOINT = 'https://internal.slippi.gg';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -18,18 +19,16 @@ const PLAYER_PROFILE_QUERY = `
         ratingUpdateCount
         wins
         losses
+        dailyGlobalPlacement
+        dailyRegionalPlacement
+        continent
       }
     }
   }
 `;
 
-export interface SlippiPlayer {
-  connectCode: string;
-  displayName: string;
-  rating: number | null;
-  wins: number | null;
-  losses: number | null;
-}
+/** Backwards-compatible name for the normalized Slippi profile model. */
+export type SlippiPlayer = PlayerProfile;
 
 export interface SlippiClientOptions {
   endpoint?: string;
@@ -100,7 +99,7 @@ export class SlippiClient {
 
     if (!isValidConnectCode(normalizedCode)) {
       throw new RangeError(
-        'Connect Code must use the format ABCD#123 (1–7 letters, #, 1–7 digits).',
+        'Connect Code must contain 1–7 letters and 1–7 digits, separated by #, a space, or a hyphen.',
       );
     }
 
@@ -227,14 +226,6 @@ export class SlippiClient {
   }
 }
 
-/**
- * Slippi Connect Codes consist of a 1–7 letter tag, a hash, and 1–7 digits.
- * This validates syntax only; Slippi remains authoritative for existence.
- */
-export function isValidConnectCode(value: string): boolean {
-  return /^[A-Z]{1,7}#[0-9]{1,7}$/.test(value);
-}
-
 function parsePlayerResponse(payload: unknown, requestedConnectCode: string): SlippiPlayer | null {
   const root = asRecord(payload);
 
@@ -279,8 +270,12 @@ function parsePlayerResponse(payload: unknown, requestedConnectCode: string): Sl
 
   const rawProfile = user.rankedNetplayProfile;
   let rating: number | null = null;
+  let ratingUpdateCount: number | null = null;
   let wins: number | null = null;
   let losses: number | null = null;
+  let dailyGlobalPlacement: number | null = null;
+  let dailyRegionalPlacement: number | null = null;
+  let continent: string | null = null;
 
   if (rawProfile !== null && rawProfile !== undefined) {
     const profile = asRecord(rawProfile);
@@ -289,17 +284,31 @@ function parsePlayerResponse(payload: unknown, requestedConnectCode: string): Sl
       throw new SlippiApiError('Slippi API returned malformed ranked data.');
     }
 
-    rating = nullableFiniteNumber(profile.ratingOrdinal, 'ratingOrdinal');
-    wins = nullableFiniteNumber(profile.wins, 'wins');
-    losses = nullableFiniteNumber(profile.losses, 'losses');
+    rating = nullableNonNegativeNumber(profile.ratingOrdinal, 'ratingOrdinal');
+    ratingUpdateCount = nullableNonNegativeInteger(profile.ratingUpdateCount, 'ratingUpdateCount');
+    wins = nullableNonNegativeInteger(profile.wins, 'wins');
+    losses = nullableNonNegativeInteger(profile.losses, 'losses');
+    dailyGlobalPlacement = nullablePositiveInteger(
+      profile.dailyGlobalPlacement,
+      'dailyGlobalPlacement',
+    );
+    dailyRegionalPlacement = nullablePositiveInteger(
+      profile.dailyRegionalPlacement,
+      'dailyRegionalPlacement',
+    );
+    continent = nullableString(profile.continent, 'continent');
   }
 
   return {
     connectCode: requestedConnectCode,
     displayName,
     rating,
+    ratingUpdateCount,
     wins,
     losses,
+    dailyGlobalPlacement,
+    dailyRegionalPlacement,
+    continent,
   };
 }
 
@@ -311,12 +320,46 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function nullableFiniteNumber(value: unknown, fieldName: string): number | null {
+function nullableNonNegativeNumber(value: unknown, fieldName: string): number | null {
   if (value === null || value === undefined) {
     return null;
   }
 
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    throw new SlippiApiError(`Slippi API returned an invalid ${fieldName} value.`);
+  }
+
+  return value;
+}
+
+function nullableNonNegativeInteger(value: unknown, fieldName: string): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new SlippiApiError(`Slippi API returned an invalid ${fieldName} value.`);
+  }
+
+  return value as number;
+}
+
+function nullablePositiveInteger(value: unknown, fieldName: string): number | null {
+  const result = nullableNonNegativeInteger(value, fieldName);
+
+  if (result !== null && result < 1) {
+    throw new SlippiApiError(`Slippi API returned an invalid ${fieldName} value.`);
+  }
+
+  return result;
+}
+
+function nullableString(value: unknown, fieldName: string): string | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value !== 'string') {
     throw new SlippiApiError(`Slippi API returned an invalid ${fieldName} value.`);
   }
 

@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import { MessageFlags } from 'discord.js';
 import { openDatabase } from '../dist/database/database.js';
 import { PlayerRepository } from '../dist/database/player-repository.js';
+import { ProfileCacheRepository } from '../dist/database/profile-cache-repository.js';
 import { handlePlayerCommand } from '../dist/commands/player.js';
 import { SlippiApiError } from '../dist/services/slippi-client.js';
 
-async function withRepository(callback) {
+async function withRepositories(callback) {
   const database = openDatabase(':memory:');
 
   try {
-    await callback(new PlayerRepository(database));
+    await callback(new PlayerRepository(database), new ProfileCacheRepository(database));
   } finally {
     database.close();
   }
@@ -44,19 +45,23 @@ function createInteraction({ guildId = 'guild-1', userId = 'user-1', subcommand,
 }
 
 function createSlippiClient(
-  implementation = async () => ({
-    connectCode: 'ABCD#123',
+  implementation = async (connectCode) => ({
+    connectCode,
     displayName: 'Test Player',
     rating: 1500,
+    ratingUpdateCount: 15,
     wins: 10,
     losses: 5,
+    dailyGlobalPlacement: null,
+    dailyRegionalPlacement: null,
+    continent: 'North America',
   }),
 ) {
   return { getPlayer: implementation };
 }
 
-test('player add verifies a profile before storing it', async () => {
-  await withRepository(async (players) => {
+test('player add verifies a profile and stores both registration and profile cache', async () => {
+  await withRepositories(async (players, profiles) => {
     let lookupCode;
     const slippi = createSlippiClient(async (code) => {
       lookupCode = code;
@@ -64,8 +69,12 @@ test('player add verifies a profile before storing it', async () => {
         connectCode: code,
         displayName: 'Test Player',
         rating: 1500,
+        ratingUpdateCount: 15,
         wins: 10,
         losses: 5,
+        dailyGlobalPlacement: null,
+        dailyRegionalPlacement: null,
+        continent: 'North America',
       };
     });
 
@@ -74,7 +83,7 @@ test('player add verifies a profile before storing it', async () => {
       connectCode: ' abcd#123 ',
     });
 
-    await handlePlayerCommand(interaction, players, slippi);
+    await handlePlayerCommand(interaction, players, profiles, slippi);
 
     assert.equal(lookupCode, 'ABCD#123');
     assert.equal(
@@ -83,11 +92,12 @@ test('player add verifies a profile before storing it', async () => {
     );
     assert.equal(interaction.deferred, true);
     assert.equal(players.get('guild-1', 'ABCD#123')?.addedByDiscordUserId, 'user-1');
+    assert.equal(profiles.get('ABCD#123')?.displayName, 'Test Player');
   });
 });
 
 test('player add rejects blank Connect Codes without a lookup', async () => {
-  await withRepository(async (players) => {
+  await withRepositories(async (players, profiles) => {
     let lookupCount = 0;
     const interaction = createInteraction({
       subcommand: 'add',
@@ -97,6 +107,7 @@ test('player add rejects blank Connect Codes without a lookup', async () => {
     await handlePlayerCommand(
       interaction,
       players,
+      profiles,
       createSlippiClient(async () => {
         lookupCount += 1;
         return null;
@@ -110,7 +121,7 @@ test('player add rejects blank Connect Codes without a lookup', async () => {
 });
 
 test('player add does not store unknown profiles', async () => {
-  await withRepository(async (players) => {
+  await withRepositories(async (players, profiles) => {
     const interaction = createInteraction({
       subcommand: 'add',
       connectCode: 'MISS#123',
@@ -119,16 +130,18 @@ test('player add does not store unknown profiles', async () => {
     await handlePlayerCommand(
       interaction,
       players,
+      profiles,
       createSlippiClient(async () => null),
     );
 
     assert.match(interaction.response.content, /could not find a profile/i);
     assert.equal(players.get('guild-1', 'MISS#123'), undefined);
+    assert.equal(profiles.get('MISS#123'), undefined);
   });
 });
 
 test('player add preserves the roster during an API outage', async () => {
-  await withRepository(async (players) => {
+  await withRepositories(async (players, profiles) => {
     const interaction = createInteraction({
       subcommand: 'add',
       connectCode: 'ABCD#123',
@@ -137,6 +150,7 @@ test('player add preserves the roster during an API outage', async () => {
     await handlePlayerCommand(
       interaction,
       players,
+      profiles,
       createSlippiClient(async () => {
         throw new SlippiApiError('Slippi API returned HTTP 503.', 503);
       }),
@@ -145,11 +159,12 @@ test('player add preserves the roster during an API outage', async () => {
     assert.match(interaction.response.content, /temporarily unavailable/i);
     assert.match(interaction.response.content, /No changes were made/i);
     assert.equal(players.get('guild-1', 'ABCD#123'), undefined);
+    assert.equal(profiles.get('ABCD#123'), undefined);
   });
 });
 
 test('player add rejects malformed input', async () => {
-  await withRepository(async (players) => {
+  await withRepositories(async (players, profiles) => {
     let lookupCount = 0;
     const interaction = createInteraction({
       subcommand: 'add',
@@ -159,6 +174,7 @@ test('player add rejects malformed input', async () => {
     await handlePlayerCommand(
       interaction,
       players,
+      profiles,
       createSlippiClient(async () => {
         lookupCount += 1;
         return null;
@@ -172,7 +188,7 @@ test('player add rejects malformed input', async () => {
 });
 
 test('player add skips lookup for existing registrations', async () => {
-  await withRepository(async (players) => {
+  await withRepositories(async (players, profiles) => {
     players.add('guild-1', 'ABCD#123', 'original-user');
     let lookupCount = 0;
     const interaction = createInteraction({
@@ -184,6 +200,7 @@ test('player add skips lookup for existing registrations', async () => {
     await handlePlayerCommand(
       interaction,
       players,
+      profiles,
       createSlippiClient(async () => {
         lookupCount += 1;
         throw new Error('Should not be called');
@@ -200,7 +217,7 @@ test('player add skips lookup for existing registrations', async () => {
 });
 
 test('player remove does not call Slippi', async () => {
-  await withRepository(async (players) => {
+  await withRepositories(async (players, profiles) => {
     players.add('guild-1', 'ABCD#123', 'user-1');
     let lookupCount = 0;
     const interaction = createInteraction({
@@ -211,6 +228,7 @@ test('player remove does not call Slippi', async () => {
     await handlePlayerCommand(
       interaction,
       players,
+      profiles,
       createSlippiClient(async () => {
         lookupCount += 1;
         return null;
@@ -224,14 +242,14 @@ test('player remove does not call Slippi', async () => {
 });
 
 test('player command rejects direct-message use ephemerally', async () => {
-  await withRepository(async (players) => {
+  await withRepositories(async (players, profiles) => {
     const interaction = createInteraction({
       guildId: null,
       subcommand: 'add',
       connectCode: 'ABCD#123',
     });
 
-    await handlePlayerCommand(interaction, players, createSlippiClient());
+    await handlePlayerCommand(interaction, players, profiles, createSlippiClient());
 
     assert.equal(interaction.deferred, false);
     assert.equal(
@@ -240,5 +258,38 @@ test('player command rejects direct-message use ephemerally', async () => {
     );
     assert.equal(interaction.response.flags, MessageFlags.Ephemeral);
     assert.equal(players.list('guild-1').length, 0);
+  });
+});
+
+test('player add accepts a hyphen separator and stores the canonical Connect Code', async () => {
+  await withRepositories(async (players, profiles) => {
+    let lookupCode;
+    const interaction = createInteraction({
+      subcommand: 'add',
+      connectCode: 'abcd-123',
+    });
+
+    await handlePlayerCommand(
+      interaction,
+      players,
+      profiles,
+      createSlippiClient(async (code) => {
+        lookupCode = code;
+        return {
+          connectCode: code,
+          displayName: 'Test Player',
+          rating: 1500,
+          ratingUpdateCount: 15,
+          wins: 10,
+          losses: 5,
+          dailyGlobalPlacement: null,
+          dailyRegionalPlacement: null,
+          continent: 'North America',
+        };
+      }),
+    );
+
+    assert.equal(lookupCode, 'ABCD#123');
+    assert.ok(players.get('guild-1', 'ABCD#123'));
   });
 });
