@@ -30,12 +30,12 @@ treat that failure as a missing player or delete registrations.
 
 ## Commands
 
-| Command | Description | Initial access |
-| --- | --- | --- |
-| `/leaderboard` | Rich leaderboard with rank artwork, profile links, Connect Codes, ratings, and records. | Everyone |
-| `/leaderboard-compact` | Compact text-only leaderboard for smaller screens. | Everyone |
-| `/player add <connect-code>` | Register a Slippi Connect Code after validating the profile. | Everyone |
-| `/player remove <connect-code>` | Remove a registered Connect Code. | Everyone |
+| Command                         | Description                                                                             | Initial access |
+| ------------------------------- | --------------------------------------------------------------------------------------- | -------------- |
+| `/leaderboard`                  | Rich leaderboard with rank artwork, profile links, Connect Codes, ratings, and records. | Everyone       |
+| `/leaderboard-compact`          | Compact text-only leaderboard for smaller screens.                                      | Everyone       |
+| `/player add <connect-code>`    | Register a Slippi Connect Code after validating the profile.                            | Everyone       |
+| `/player remove <connect-code>` | Remove a registered Connect Code.                                                       | Everyone       |
 
 Connect Codes may use the official `TAG#123` separator (`#`) or a single
 space or hyphen in its place. Values are normalized to the canonical
@@ -111,25 +111,25 @@ again. The underlying player roster and profile cache remain in SQLite.
 
 ## Architecture decisions
 
-| Concern | Decision |
-| --- | --- |
-| Language | TypeScript |
-| Runtime | Node.js 26 LTS |
-| Discord library | `discord.js` |
-| Discord connection | Gateway connection; slash commands and component interactions |
-| Gateway intents | `Guilds` only |
-| Database | SQLite via `better-sqlite3` |
-| Player registrations | Guild-specific; Connect Code is canonicalized |
-| Profile cache | Persistent SQLite cache with a 30-minute refresh interval |
-| Slippi integration | Isolated GraphQL client using `fetch` |
-| Rank calculation | Separate rank resolver |
-| Leaderboard UI | Discord Components V2; rich and compact layouts |
-| Rank artwork | Discord application-owned custom emojis |
-| Deployment | Docker on Fly.io |
-| Runtime topology | One always-on Machine; no replicas |
-| Persistent data | SQLite database on a Fly Volume mounted at `/data` |
-| Command registration | Guild-scoped for the community server |
-| License | GNU GPL version 3.0 only (`GPL-3.0-only`) |
+| Concern              | Decision                                                      |
+| -------------------- | ------------------------------------------------------------- |
+| Language             | TypeScript                                                    |
+| Runtime              | Node.js 26 LTS                                                |
+| Discord library      | `discord.js`                                                  |
+| Discord connection   | Gateway connection; slash commands and component interactions |
+| Gateway intents      | `Guilds` only                                                 |
+| Database             | SQLite via `better-sqlite3`                                   |
+| Player registrations | Guild-specific; Connect Code is canonicalized                 |
+| Profile cache        | Persistent SQLite cache with a 30-minute refresh interval     |
+| Slippi integration   | Isolated GraphQL client using `fetch`                         |
+| Rank calculation     | Separate rank resolver                                        |
+| Leaderboard UI       | Discord Components V2; rich and compact layouts               |
+| Rank artwork         | Discord application-owned custom emojis                       |
+| Deployment           | Docker on Fly.io                                              |
+| Runtime topology     | One always-on Machine; no replicas                            |
+| Persistent data      | SQLite database on a Fly Volume mounted at `/data`            |
+| Command registration | Guild-scoped for the community server                         |
+| License              | GNU GPL version 3.0 only (`GPL-3.0-only`)                     |
 
 The bot does not need a public inbound HTTP endpoint. It initiates outbound
 connections to Discord and Slippi.
@@ -243,13 +243,13 @@ before modifying or redistributing artwork.
 
 ## Configuration
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `DISCORD_TOKEN` | Yes | Bot token from the Discord Developer Portal. Secret; never commit it. |
-| `DISCORD_CLIENT_ID` | Yes | Discord application ID. |
-| `DISCORD_GUILD_ID` | Yes | Server ID used for guild-scoped command registration. |
-| `DATABASE_PATH` | No | SQLite database path. Defaults to `./data/slippi-discord-bot.sqlite`. |
-| `SLIPPI_GRAPHQL_ENDPOINT` | No | Slippi GraphQL endpoint; defaults to `https://internal.slippi.gg`. |
+| Variable                  | Required | Description                                                           |
+| ------------------------- | -------- | --------------------------------------------------------------------- |
+| `DISCORD_TOKEN`           | Yes      | Bot token from the Discord Developer Portal. Secret; never commit it. |
+| `DISCORD_CLIENT_ID`       | Yes      | Discord application ID.                                               |
+| `DISCORD_GUILD_ID`        | Yes      | Server ID used for guild-scoped command registration.                 |
+| `DATABASE_PATH`           | No       | SQLite database path. Defaults to `./data/slippi-discord-bot.sqlite`. |
+| `SLIPPI_GRAPHQL_ENDPOINT` | No       | Slippi GraphQL endpoint; defaults to `https://internal.slippi.gg`.    |
 
 For local development, npm scripts load `.env`. In production, inject
 `DISCORD_TOKEN`, `DISCORD_CLIENT_ID`, and `DISCORD_GUILD_ID` through Fly
@@ -291,17 +291,17 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations.
 
 The production application is deployed to Fly.io.
 
-| Setting | Current configuration |
-| --- | --- |
-| Fly app | `nwoh-slippi-discord-bot-prod` |
-| Region | `ord` (Chicago) |
-| Machine count | One |
-| Machine size | `shared-cpu-1x`, 256 MB RAM |
-| Volume | `data`, 1 GB |
-| Mount point | `/data` |
-| Restart policy | `always` |
-| Public inbound application service | None |
-| Database path | `/data/slippi-discord-bot.sqlite` |
+| Setting                            | Current configuration             |
+| ---------------------------------- | --------------------------------- |
+| Fly app                            | `nwoh-slippi-discord-bot-prod`    |
+| Region                             | `ord` (Chicago)                   |
+| Machine count                      | One                               |
+| Machine size                       | `shared-cpu-1x`, 256 MB RAM       |
+| Volume                             | `data`, 1 GB                      |
+| Mount point                        | `/data`                           |
+| Restart policy                     | `always`                          |
+| Public inbound application service | None                              |
+| Database path                      | `/data/slippi-discord-bot.sqlite` |
 
 The production Docker image has built and deployed successfully. The Machine
 has connected to the production Discord Gateway, initialized SQLite on the
@@ -434,10 +434,10 @@ After installation:
 ### Remaining before community launch
 
 - [ ] Verify the GitHub Actions deployment job is present and successfully
-  deploys only after the `quality` job passes on `main`. The GitHub
-  `production` environment and `FLY_API_TOKEN` secret have been configured.
+      deploys only after the `quality` job passes on `main`. The GitHub
+      `production` environment and `FLY_API_TOKEN` secret have been configured.
 - [ ] Provide the production Discord installation link to the community server
-  administrator.
+      administrator.
 - [ ] Have the administrator install the bot into the community server.
 - [ ] Confirm channel access and server integration settings.
 - [ ] Register production guild commands using `.env.production`.
@@ -452,11 +452,11 @@ launch:
 - [ ] Off-provider automated SQLite backups and a restore procedure.
 - [ ] External uptime/heartbeat monitoring.
 - [ ] Review actual Fly memory usage after the bot has run in production; raise
-  the Machine to 512 MB if measured usage warrants it.
+      the Machine to 512 MB if measured usage warrants it.
 - [ ] Revisit moderator-only permissions for player add/remove if community
-  feedback indicates a need.
+      feedback indicates a need.
 - [ ] Consider additional Discord servers or features only when there is a
-  concrete requirement.
+      concrete requirement.
 
 The project currently accepts the risk of losing the production Fly Volume.
 If that happens, the local community roster and cached profiles can be
