@@ -3,7 +3,10 @@ import { SlashCommandBuilder } from 'discord.js';
 export const commandDefinitions = [
   new SlashCommandBuilder()
     .setName('leaderboard')
-    .setDescription('Show the community Slippi leaderboard.'),
+    .setDescription('Show the rich community Slippi leaderboard with rank badges.'),
+  new SlashCommandBuilder()
+    .setName('leaderboard-compact')
+    .setDescription('Show a compact, text-only community Slippi leaderboard.'),
   new SlashCommandBuilder()
     .setName('player')
     .setDescription('Add or remove a player from the community leaderboard.')

@@ -1,28 +1,26 @@
 # Slippi Discord Bot
 
-A Discord bot for maintaining and displaying a community leaderboard of Super Smash Bros. Melee players using Slippi Connect Codes and rating information.
+A Discord bot for maintaining and displaying a community leaderboard of Super
+Smash Bros. Melee players using Slippi Connect Codes and ranked profile data.
 
-> **Project status:** Initial development. The application scaffold and slash-command registration are being established; the leaderboard and player-management behavior are not implemented yet.
+> **Project status:** Core functionality is implemented and being prepared for
+> its first production deployment. See the roadmap below for remaining work.
 
-## Goals
+## Commands
 
-- Provide a simple, reliable leaderboard for one local Melee community.
-- Allow community members to add and remove registered players.
-- Retrieve player profile and rating information from Slippi.
-- Keep persistent state in a small SQLite database.
-- Run continuously as a single lightweight Fly.io Machine.
-- Keep the project public and contributions available under GPL-3.0.
-- Minimize operational overhead and recurring hosting cost.
+| Command                         | Description                                                                            | Initial access |
+| ------------------------------- | -------------------------------------------------------------------------------------- | -------------- |
+| `/leaderboard`                  | Rich leaderboard with rank badges, profile links, Connect Codes, ratings, and records. | Everyone       |
+| `/leaderboard-compact`          | Compact text-only leaderboard for smaller screens.                                     | Everyone       |
+| `/player add <connect-code>`    | Register a Slippi Connect Code.                                                        | Everyone       |
+| `/player remove <connect-code>` | Remove a registered Connect Code.                                                      | Everyone       |
 
-## Initial commands
+Connect Codes may use the official `TAG#123` separator (#) or a single space or
+hyphen in its place. Values are normalized to the canonical `TAG#123` format.
 
-| Command                         | Description                                         | Initial access |
-| ------------------------------- | --------------------------------------------------- | -------------- |
-| `/leaderboard`                  | Display registered players ranked by Slippi rating. | Everyone       |
-| `/player add <connect-code>`    | Register a Slippi Connect Code.                     | Everyone       |
-| `/player remove <connect-code>` | Remove a registered Connect Code.                   | Everyone       |
-
-Command access is intentionally open in the initial release. Authorization should be implemented behind a replaceable policy so that moderator-only restrictions can be added later without rewriting command logic.
+Command access is intentionally open in the initial release. Authorization
+should be implemented behind a replaceable policy so that moderator-only
+restrictions can be added later without rewriting command logic.
 
 ## Architecture decisions
 
@@ -31,16 +29,18 @@ Command access is intentionally open in the initial release. Authorization shoul
 | Language             | TypeScript                                                               |
 | Runtime              | Node.js 26 LTS                                                           |
 | Discord library      | `discord.js`                                                             |
-| Discord connection   | Gateway connection; slash commands only                                  |
+| Discord connection   | Gateway connection; slash commands and component interactions            |
 | Gateway intents      | `Guilds` only unless a future feature proves another intent is necessary |
 | Database             | SQLite via `better-sqlite3`                                              |
+| Profile cache        | Persistent SQLite cache with a 30-minute refresh interval                |
 | Deployment           | Docker on Fly.io                                                         |
 | Runtime topology     | One always-on Machine; no replicas initially                             |
 | Persistent data      | SQLite database on a Fly Volume mounted at `/data`                       |
 | Command registration | Guild-scoped for the initial community server                            |
-| License              | GNU GPL version 3.0 (GPL-3.0-only)                                       |
+| License              | GNU GPL version 3.0 only (`GPL-3.0-only`)                                |
 
-The bot does not need a public inbound HTTP endpoint. It initiates outbound connections to Discord and Slippi.
+The bot does not need a public inbound HTTP endpoint. It initiates outbound
+connections to Discord and Slippi.
 
 ## Requirements
 
@@ -51,7 +51,7 @@ The bot does not need a public inbound HTTP endpoint. It initiates outbound conn
 
 ## Local development
 
-1. Install dependencies and create the lockfile:
+1. Install dependencies:
 
    ```bash
    npm install
@@ -82,18 +82,46 @@ The bot does not need a public inbound HTTP endpoint. It initiates outbound conn
    npm run commands:register
    ```
 
-Guild commands are preferred during development because updates are available quickly and remain scoped to the test server. Do not register global commands until there is a deliberate decision to do so.
+Guild commands are preferred during development because updates are available
+quickly and remain scoped to the test server. Do not register global commands
+until there is a deliberate decision to do so.
+
+## Rank artwork
+
+The rich leaderboard uses Discord application-owned custom emojis for Slippi
+rank badges. These are image-based Discord emojis, not Unicode emoji
+approximations. See [the presentation guide](docs/leaderboard-presentation.md)
+and [the asset attribution notice](assets/ranks/ASSET-NOTICES.md).
+
+To prepare the local rank images and upload them to the currently configured
+Discord application:
+
+```bash
+npm run assets:import
+npm run emojis:sync
+```
+
+The import step downloads upstream SVG artwork from a pinned Project Slippi
+revision and converts it to transparent 128 × 128 PNG files. The sync step
+creates any missing application emojis. Restart the bot after syncing so it
+loads the new emoji map. Run the sync separately for the production application
+using its credentials; development and production applications do not share
+emoji collections.
 
 ## Configuration
 
-| Variable            | Required | Description                                                                     |
-| ------------------- | -------- | ------------------------------------------------------------------------------- |
-| `DISCORD_TOKEN`     | Yes      | Bot token from the Discord Developer Portal. Secret; never commit it.           |
-| `DISCORD_CLIENT_ID` | Yes      | Discord application ID.                                                         |
-| `DISCORD_GUILD_ID`  | Yes      | Development or production server ID used for guild-scoped command registration. |
-| `DATABASE_PATH`     | No       | SQLite database path. Defaults to `./data/slippi-discord-bot.sqlite`.           |
+| Variable                  | Required | Description                                                           |
+| ------------------------- | -------- | --------------------------------------------------------------------- |
+| `DISCORD_TOKEN`           | Yes      | Bot token from the Discord Developer Portal. Secret; never commit it. |
+| `DISCORD_CLIENT_ID`       | Yes      | Discord application ID.                                               |
+| `DISCORD_GUILD_ID`        | Yes      | Server ID used for guild-scoped command registration.                 |
+| `DATABASE_PATH`           | No       | SQLite database path. Defaults to `./data/slippi-discord-bot.sqlite`. |
+| `SLIPPI_GRAPHQL_ENDPOINT` | No       | Slippi GraphQL endpoint; defaults to `internal.slippi.gg`.            |
 
-For local development, Node loads `.env` using its built-in `--env-file-if-exists` option through the npm scripts. In production, inject variables through Fly secrets and set `DATABASE_PATH=/data/slippi-discord-bot.sqlite`.
+For local development, Node loads `.env` using its built-in
+`--env-file-if-exists` option through the npm scripts. In production, inject
+variables through Fly secrets and set
+`DATABASE_PATH=/data/slippi-discord-bot.sqlite`.
 
 ## Security and operational principles
 
@@ -103,8 +131,9 @@ For local development, Node loads `.env` using its built-in `--env-file-if-exist
 - Keep the bot process non-root in its container.
 - Use a persistent volume for the SQLite database; container filesystems are not durable storage.
 - Maintain a recoverable database backup outside the Machine/volume failure domain.
-- Do not run multiple active bot instances against the same SQLite file or Discord application without explicitly designing coordination and failover.
-- Treat Slippi API responses as external, potentially unavailable input: apply timeouts, validate response shapes, and provide useful partial-failure messages.
+- Do not run multiple active bot instances against the same SQLite file or Discord application without an explicit coordination design.
+- Treat Slippi API responses as external and potentially unavailable: apply timeouts and validate response shapes.
+- Suppress unintended mentions and escape profile-controlled display names before rendering Markdown.
 
 ## Development workflow
 
@@ -112,8 +141,8 @@ For local development, Node loads `.env` using its built-in `--env-file-if-exist
 - Open pull requests against `main`.
 - Require one approving review and resolution of review comments.
 - Run CI checks before merge.
-- Keep production secrets out of pull-request workflows, especially workflows triggered by external contributors.
-- Organization administrators may use the configured ruleset bypass for maintenance when a second reviewer is unavailable; prefer the normal PR path where practical.
+- Keep production secrets out of external pull-request workflows.
+- Organization administrators may use the configured ruleset bypass when a second reviewer is unavailable; prefer PRs where practical.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations.
 
@@ -123,19 +152,21 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations.
 
 - [x] Public repository and GPL-3.0 license
 - [x] Protected `main` branch and GitHub security features configured
-- [ ] TypeScript project scaffold and CI checks
-- [ ] Discord application configuration
-- [ ] Guild-scoped slash-command registration
+- [x] TypeScript project scaffold and CI checks
+- [x] Discord development application and guild-scoped command registration
 
 ### 2. Core functionality
 
-- [ ] SQLite schema and repository layer
-- [ ] Slippi API client with timeout and response validation
-- [ ] Add and remove registered players
-- [ ] Leaderboard retrieval, sorting, and presentation
-- [ ] Duplicate and invalid Connect Code handling
-- [ ] Useful handling for partial Slippi/API failures
-- [ ] Unit tests for domain logic and repository behavior
+- [x] SQLite schema and repository layer
+- [x] Slippi API client with timeout and response validation
+- [x] Add and remove registered players
+- [x] Persistent profile cache and leaderboard rank calculation
+- [x] Leaderboard retrieval, sorting, pagination, and presentation
+- [x] Duplicate and invalid Connect Code handling
+- [x] Useful handling for partial Slippi/API failures
+- [x] Unit tests for domain logic and repository behavior
+- [ ] Rich and compact leaderboard presentation polish
+- [ ] Application-owned rank emoji assets and attribution
 
 ### 3. Production deployment
 
@@ -157,4 +188,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations.
 
 ## License
 
-This project is licensed under the GNU General Public License, version 3.0 only. See [LICENSE](LICENSE).
+This project is licensed under the GNU General Public License, version 3.0
+only. See [LICENSE](LICENSE).

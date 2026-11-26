@@ -1,10 +1,16 @@
 import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
-import { handleLeaderboardCommand } from './commands/leaderboard.js';
+import {
+  handleCompactLeaderboardCommand,
+  handleLeaderboardButtonInteraction,
+  handleLeaderboardCommand,
+} from './commands/leaderboard.js';
 import { handlePlayerCommand } from './commands/player.js';
 import { config } from './config.js';
+import { isLeaderboardButtonCustomId } from './domain/leaderboard-pagination.js';
 import { openDatabase } from './database/database.js';
 import { PlayerRepository } from './database/player-repository.js';
 import { ProfileCacheRepository } from './database/profile-cache-repository.js';
+import { LeaderboardSessionStore } from './services/leaderboard-session-store.js';
 import { LeaderboardService } from './services/leaderboard-service.js';
 import { SlippiClient } from './services/slippi-client.js';
 
@@ -13,16 +19,30 @@ const players = new PlayerRepository(database);
 const profiles = new ProfileCacheRepository(database);
 const slippi = new SlippiClient({ endpoint: config.slippiGraphqlEndpoint });
 const leaderboard = new LeaderboardService(players, profiles, slippi);
+const leaderboardSessions = new LeaderboardSessionStore();
 
 const client = new Client({
-  // Slash commands only require the Guilds intent. Add other intents only when
-  // an implemented feature demonstrably needs them.
+  // Slash commands and components only require the Guilds intent.
   intents: [GatewayIntentBits.Guilds],
 });
 
-client.once(Events.ClientReady, (readyClient) => {
+let applicationEmojiTags = new Map<string, string>();
+
+client.once(Events.ClientReady, async (readyClient) => {
   console.info(`Logged in as ${readyClient.user.tag}.`);
   console.info(`SQLite database opened at ${config.databasePath}.`);
+
+  try {
+    const emojis = await readyClient.application.emojis.fetch();
+    applicationEmojiTags = new Map(
+      emojis.map((emoji) => [emoji.name, `<:${emoji.name}:${emoji.id}>`] as const),
+    );
+    console.info(`Loaded ${applicationEmojiTags.size} application emoji(s).`);
+  } catch (error) {
+    // The leaderboard remains usable with textual rank labels if emoji access
+    // is temporarily unavailable or the assets have not been synchronized.
+    console.warn('Could not load Discord application rank emojis:', error);
+  }
 });
 
 client.on(Events.Error, (error) => {
@@ -30,6 +50,15 @@ client.on(Events.Error, (error) => {
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isButton() && isLeaderboardButtonCustomId(interaction.customId)) {
+    await handleLeaderboardButtonInteraction(
+      interaction,
+      leaderboardSessions,
+      applicationEmojiTags,
+    );
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) {
     return;
   }
@@ -41,7 +70,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
         break;
 
       case 'leaderboard':
-        await handleLeaderboardCommand(interaction, leaderboard);
+        await handleLeaderboardCommand(
+          interaction,
+          leaderboard,
+          leaderboardSessions,
+          applicationEmojiTags,
+        );
+        break;
+
+      case 'leaderboard-compact':
+        await handleCompactLeaderboardCommand(interaction, leaderboard, leaderboardSessions);
         break;
 
       default:
