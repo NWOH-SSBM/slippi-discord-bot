@@ -1,0 +1,24 @@
+app = "nwoh-slippi-discord-bot-prod"
+primary_region = "ord"
+
+kill_signal = "SIGTERM"
+kill_timeout = "30s"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  DATABASE_PATH = "/data/slippi-discord-bot.sqlite"
+  SLIPPI_GRAPHQL_ENDPOINT = "https://internal.slippi.gg"
+
+[mounts]
+  source = "data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[[restart]]
+  policy = "always"
