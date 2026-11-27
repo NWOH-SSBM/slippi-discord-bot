@@ -14,6 +14,7 @@ export interface LeaderboardPageOptions {
   pageIndex: number;
   pageCount: number;
   applicationEmojiTags?: ReadonlyMap<string, string>;
+  footerText?: string;
 }
 
 /** Render a rich, two-line-per-player page for a Components V2 text display. */
@@ -36,7 +37,7 @@ export function formatRichLeaderboardPage(
       return formatRichEntry(entry, position, emojiTags);
     }),
     '---',
-    `*Page ${pageIndex + 1} of ${pageCount} · ${formatOldestProfileDate(snapshot)}*`,
+    `*${options.footerText ?? `Page ${pageIndex + 1} of ${pageCount} · ${formatOldestProfileDate(snapshot)}`}*`,
   ];
 
   const text = lines.join('\n');
@@ -97,7 +98,9 @@ export function formatCompactLeaderboardPage(
 
   const status = buildCompactStatusLines(snapshot);
   const table = ['```text', header, '-'.repeat(header.length), ...rows, '```'];
-  const footer = `Page ${pageIndex + 1} of ${pageCount} · ${formatOldestProfileDate(snapshot)}`;
+  const footer =
+    options.footerText ??
+    `Page ${pageIndex + 1} of ${pageCount} · ${formatOldestProfileDate(snapshot)}`;
   const text = [...status, ...(status.length > 0 ? [''] : []), ...table, '', `_${footer}_`].join(
     '\n',
   );
@@ -110,6 +113,53 @@ export function formatCompactLeaderboardPage(
   }
 
   return text;
+}
+
+/** Render a non-interactive scheduled rich snapshot, limited to the first page. */
+export function formatScheduledRichLeaderboard(
+  snapshot: LeaderboardSnapshot,
+  applicationEmojiTags: ReadonlyMap<string, string>,
+): string {
+  if (snapshot.registeredPlayerCount === 0) {
+    return [
+      '# 🏆 Slippi Leaderboard',
+      'No players are registered yet. Use `/player add` to add the first player.',
+      `*Scheduled weekly snapshot · ${formatOldestProfileDate(snapshot)}*`,
+    ].join('\n');
+  }
+
+  return formatRichLeaderboardPage(snapshot, {
+    pageIndex: 0,
+    pageCount: 1,
+    applicationEmojiTags,
+    footerText: formatScheduledFooter(snapshot, '/leaderboard'),
+  });
+}
+
+/** Render a non-interactive scheduled compact snapshot, limited to the first page. */
+export function formatScheduledCompactLeaderboard(snapshot: LeaderboardSnapshot): string {
+  if (snapshot.registeredPlayerCount === 0) {
+    return [
+      'No players are registered yet. Use /player add to add the first player.',
+      `_Scheduled weekly snapshot · ${formatOldestProfileDate(snapshot)}_`,
+    ].join('\n');
+  }
+
+  return formatCompactLeaderboardPage(snapshot, {
+    pageIndex: 0,
+    pageCount: 1,
+    footerText: formatScheduledFooter(snapshot, '/leaderboard-compact'),
+  });
+}
+
+function formatScheduledFooter(snapshot: LeaderboardSnapshot, fullListCommand: string): string {
+  const displayedCount = Math.min(snapshot.registeredPlayerCount, LEADERBOARD_PAGE_SIZE);
+  const countDescription =
+    snapshot.registeredPlayerCount > displayedCount
+      ? `showing top ${displayedCount} of ${formatInteger(snapshot.registeredPlayerCount)} registered players · run ${fullListCommand} for the full list`
+      : `${formatInteger(snapshot.registeredPlayerCount)} registered players`;
+
+  return `Scheduled weekly snapshot · ${countDescription} · ${formatOldestProfileDate(snapshot)}`;
 }
 
 function getPageEntries(snapshot: LeaderboardSnapshot, pageIndex: number): LeaderboardEntry[] {
