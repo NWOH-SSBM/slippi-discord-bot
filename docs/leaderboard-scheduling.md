@@ -80,7 +80,12 @@ an execution instant that may become stale when time-zone rules change.
 Croner 11.0.1 constructs the in-memory jobs. When Discord becomes ready, the
 scheduler reads enabled rows from SQLite and recreates their jobs. Schedule
 changes, pause/resume, and removal update the in-memory jobs immediately. The
-scheduler is process-local and assumes the project's one-Machine deployment;
+scheduler owns job identity in a guild-keyed `Map`; Croner jobs are deliberately
+not assigned global names. This allows a replacement job to be constructed
+before the previous job is stopped, without colliding with Croner's process-wide
+named-job registry.
+
+The scheduler is process-local and assumes the project's one-Machine deployment;
 do not run multiple active bot instances against the same SQLite database or
 Discord application without an explicit coordination design.
 

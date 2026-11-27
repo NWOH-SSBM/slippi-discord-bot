@@ -128,7 +128,9 @@ each Discord server can configure one weekly post with
 - `format`: `rich` or `compact`.
 
 The `set` subcommand creates or replaces that server's one schedule and enables
-it. `show` reports its configuration, next occurrence, and last run result.
+it. Updating an existing schedule preserves its row identity, creation
+information, and prior execution history while replacing its configuration.
+`show` reports its configuration, next occurrence, and last run result.
 `pause` and `resume` control future automatic posts without deleting the
 configuration. `remove` deletes it. `test` publishes immediately to the
 configured channel, even if the schedule is paused, without changing scheduled

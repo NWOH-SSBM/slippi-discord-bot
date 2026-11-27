@@ -62,7 +62,9 @@ test('restores enabled schedules and creates each job with its local time zone',
     assert.equal(fixture.jobs[0].expression, '0 30 18 * * 0');
     assert.equal(fixture.jobs[0].options.timezone, 'America/New_York');
     assert.equal(fixture.jobs[0].options.protect, true);
-    assert.equal(fixture.jobs[0].options.name, 'slippi-leaderboard-guild-1');
+    // The scheduler owns job identity in its guild-keyed Map. Croner names
+    // are globally unique within a process and are unnecessary here.
+    assert.equal(fixture.jobs[0].options.name, undefined);
   } finally {
     closeFixture(fixture);
   }
@@ -97,6 +99,40 @@ test('sync replaces the old job and stops jobs for paused or removed schedules',
   }
 });
 
+test('real Croner replaces an existing guild job without a duplicate-name conflict', async () => {
+  const createdJobs = [];
+  const fixture = createFixture({
+    createJob: (expression, options, callback) => {
+      const job = new Cron(expression, options, callback);
+      createdJobs.push(job);
+      return job;
+    },
+  });
+
+  try {
+    fixture.schedules.save(baseInput);
+    fixture.scheduler.start();
+
+    assert.equal(createdJobs.length, 1);
+    const original = createdJobs[0];
+
+    fixture.schedules.save({
+      ...baseInput,
+      localTime: '19:45',
+      actorDiscordUserId: 'admin-2',
+    });
+
+    assert.doesNotThrow(() => fixture.scheduler.sync('guild-1'));
+    assert.equal(createdJobs.length, 2);
+    assert.equal(original.isStopped(), true);
+    assert.equal(createdJobs[1].isRunning(), true);
+    assert.equal(createdJobs[1].getPattern(), '0 45 19 * * 0');
+  } finally {
+    await fixture.scheduler.shutdown();
+    closeFixture(fixture);
+  }
+});
+
 test('getNextRun creates a paused preview job and returns its next occurrence', () => {
   const fixture = createFixture();
   try {
@@ -105,6 +141,7 @@ test('getNextRun creates a paused preview job and returns its next occurrence', 
 
     assert.ok(nextRun instanceof Date);
     assert.equal(fixture.jobs[0].options.paused, true);
+    assert.equal(fixture.jobs[0].options.name, undefined);
     assert.equal(fixture.jobs[0].stopped, true);
   } finally {
     closeFixture(fixture);

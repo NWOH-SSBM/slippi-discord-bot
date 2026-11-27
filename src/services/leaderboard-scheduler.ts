@@ -97,7 +97,6 @@ export class LeaderboardScheduler {
       {
         timezone: schedule.timeZone,
         protect: true,
-        name: `slippi-leaderboard-${schedule.guildId}`,
       },
       () => this.runScheduled(schedule.guildId),
     );
@@ -120,7 +119,6 @@ export class LeaderboardScheduler {
         timezone: schedule.timeZone,
         paused: true,
         protect: true,
-        name: `slippi-leaderboard-preview-${schedule.guildId}`,
       },
       () => undefined,
     );
