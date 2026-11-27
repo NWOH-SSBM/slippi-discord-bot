@@ -3,10 +3,10 @@
 A Discord bot for maintaining and displaying a community leaderboard of Super
 Smash Bros. Melee players using Slippi Connect Codes and ranked profile data.
 
-> **Project status:** The production application is deployed on Fly.io and
-> connected to Discord. The remaining launch dependency is installation into
-> the community Discord server, followed by production command registration
-> and acceptance testing. See [Production status and launch checklist](#production-status-and-launch-checklist).
+> **Project status:** The bot is live in the community Discord server. The
+> recurring weekly leaderboard schedule feature is being developed on a feature
+> branch and is not yet deployed to production. See [Production status and
+> maintenance](#production-status-and-maintenance).
 
 Repository: [NWOH-SSBM/slippi-discord-bot](https://github.com/NWOH-SSBM/slippi-discord-bot)
 
@@ -22,6 +22,8 @@ Repository: [NWOH-SSBM/slippi-discord-bot](https://github.com/NWOH-SSBM/slippi-d
 - Paginate leaderboard results, with 20 players per page.
 - Keep player registrations when Slippi is temporarily unavailable and clearly
   indicate when cached profile information is stale.
+- Configure one recurring weekly leaderboard post per Discord server, with a
+  local time, IANA time zone, destination channel, and rich or compact format.
 
 The Slippi profile endpoint used by the bot is an internal GraphQL API, not a
 stable public API contract. The client validates responses and handles
@@ -30,21 +32,23 @@ treat that failure as a missing player or delete registrations.
 
 ## Commands
 
-| Command                         | Description                                                                             | Initial access |
-| ------------------------------- | --------------------------------------------------------------------------------------- | -------------- |
-| `/leaderboard`                  | Rich leaderboard with rank artwork, profile links, Connect Codes, ratings, and records. | Everyone       |
-| `/leaderboard-compact`          | Compact text-only leaderboard for smaller screens.                                      | Everyone       |
-| `/player add <connect-code>`    | Register a Slippi Connect Code after validating the profile.                            | Everyone       |
-| `/player remove <connect-code>` | Remove a registered Connect Code.                                                       | Everyone       |
+| Command                         | Description                                                                             | Initial access           |
+| ------------------------------- | --------------------------------------------------------------------------------------- | ------------------------ |
+| `/leaderboard`                  | Rich leaderboard with rank artwork, profile links, Connect Codes, ratings, and records. | Everyone                 |
+| `/leaderboard-compact`          | Compact text-only leaderboard for smaller screens.                                      | Everyone                 |
+| `/player add <connect-code>`    | Register a Slippi Connect Code after validating the profile.                            | Everyone                 |
+| `/player remove <connect-code>` | Remove a registered Connect Code.                                                       | Everyone                 |
+| `/leaderboard-schedule`         | Configure, inspect, pause, resume, remove, or test the server's weekly post.            | Administrator by default |
 
 Connect Codes may use the official `TAG#123` separator (`#`) or a single
 space or hyphen in its place. Values are normalized to the canonical
 `TAG#123` format.
 
-Command access is intentionally open in the initial release. Authorization
-should remain behind a replaceable policy so moderator-only restrictions can
-be added later without rewriting command logic. Members should be aware that
-anyone can currently add or remove any registered player.
+Player registration and removal are intentionally open in the initial
+release: anyone can currently add or remove any registered player. The
+schedule-management command is Administrator-only by default; server
+administrators can grant additional roles or members access through Discord's
+Integration command permissions.
 
 ## Leaderboard behavior
 
@@ -109,27 +113,76 @@ their session expires or when the bot restarts; clicking them should return an
 ephemeral message explaining that the user must run the leaderboard command
 again. The underlying player roster and profile cache remain in SQLite.
 
+## Recurring leaderboard posts
+
+The scheduling feature is currently on the `feature/leaderboard-schedule`
+branch and is not yet part of the production `main` deployment. Once merged,
+each Discord server can configure one weekly post with
+`/leaderboard-schedule set`:
+
+- `day`: Sunday through Saturday.
+- `time`: local wall-clock time in 24-hour `HH:MM` format.
+- `time-zone`: an IANA identifier such as `America/New_York` (autocomplete is
+  provided; the bot does not infer a user's time zone from Discord).
+- `channel`: a text or announcement channel in the same server.
+- `format`: `rich` or `compact`.
+
+The `set` subcommand creates or replaces that server's one schedule and enables
+it. Updating an existing schedule preserves its row identity, creation
+information, and prior execution history while replacing its configuration.
+`show` reports its configuration, next occurrence, and last run result.
+`pause` and `resume` control future automatic posts without deleting the
+configuration. `remove` deletes it. `test` publishes immediately to the
+configured channel, even if the schedule is paused, without changing scheduled
+run history.
+
+Scheduled posts are static snapshots of the top 20 registered players and do
+not include pagination buttons. They retain the selected rich or compact
+presentation, rank artwork where applicable, profile links, Connect Codes,
+ratings, records, and stale-cache warnings. Members can use the normal
+leaderboard commands to browse the full roster interactively.
+
+The singular `leaderboard_schedule` SQLite table has a unique constraint on
+`guild_id`, enforcing one schedule per server. No `schedule_name` is stored.
+The table is introduced by schema migration 3; see the [data model guide](docs/data-model.md)
+for all tables and migration details.
+The next occurrence is calculated from the saved weekday, local time, and IANA
+time zone; a UTC timestamp is not persisted. Croner 11.0.1 reconstructs
+in-memory jobs from enabled rows when the bot becomes ready. Its fixed-time DST
+behavior is: a missing local time during spring-forward runs at the first valid
+time after the gap, and a repeated local time during fall-back runs once at its
+first occurrence. See the [scheduling guide](docs/leaderboard-scheduling.md)
+for lifecycle and operational details.
+
+Missed occurrences are skipped after downtime; the bot does not backfill
+posts. A failed publication is recorded in the schedule row but does not
+remove or disable the schedule. The next weekly occurrence remains scheduled.
+The scheduler runs inside the existing Node.js process and uses the same
+SQLite database; no second Machine or external scheduling service is required.
+
 ## Architecture decisions
 
-| Concern              | Decision                                                      |
-| -------------------- | ------------------------------------------------------------- |
-| Language             | TypeScript                                                    |
-| Runtime              | Node.js 26 LTS                                                |
-| Discord library      | `discord.js`                                                  |
-| Discord connection   | Gateway connection; slash commands and component interactions |
-| Gateway intents      | `Guilds` only                                                 |
-| Database             | SQLite via `better-sqlite3`                                   |
-| Player registrations | Guild-specific; Connect Code is canonicalized                 |
-| Profile cache        | Persistent SQLite cache with a 30-minute refresh interval     |
-| Slippi integration   | Isolated GraphQL client using `fetch`                         |
-| Rank calculation     | Separate rank resolver                                        |
-| Leaderboard UI       | Discord Components V2; rich and compact layouts               |
-| Rank artwork         | Discord application-owned custom emojis                       |
-| Deployment           | Docker on Fly.io                                              |
-| Runtime topology     | One always-on Machine; no replicas                            |
-| Persistent data      | SQLite database on a Fly Volume mounted at `/data`            |
-| Command registration | Guild-scoped for the community server                         |
-| License              | GNU GPL version 3.0 only (`GPL-3.0-only`)                     |
+| Concern              | Decision                                                       |
+| -------------------- | -------------------------------------------------------------- |
+| Language             | TypeScript                                                     |
+| Runtime              | Node.js 26 LTS                                                 |
+| Discord library      | `discord.js`                                                   |
+| Discord connection   | Gateway connection; slash commands and component interactions  |
+| Gateway intents      | `Guilds` only                                                  |
+| Database             | SQLite via `better-sqlite3`                                    |
+| Player registrations | Guild-specific; Connect Code is canonicalized                  |
+| Profile cache        | Persistent SQLite cache with a 30-minute refresh interval      |
+| Slippi integration   | Isolated GraphQL client using `fetch`                          |
+| Rank calculation     | Separate rank resolver                                         |
+| Leaderboard UI       | Discord Components V2; rich and compact layouts                |
+| Scheduled jobs       | Croner 11.0.1; weekly local-time schedule with IANA time zones |
+| Schedule persistence | Singular `leaderboard_schedule`; one row per guild             |
+| Rank artwork         | Discord application-owned custom emojis                        |
+| Deployment           | Docker on Fly.io                                               |
+| Runtime topology     | One always-on Machine; no replicas                             |
+| Persistent data      | SQLite database on a Fly Volume mounted at `/data`             |
+| Command registration | Guild-scoped for the community server                          |
+| License              | GNU GPL version 3.0 only (`GPL-3.0-only`)                      |
 
 The bot does not need a public inbound HTTP endpoint. It initiates outbound
 connections to Discord and Slippi.
@@ -307,10 +360,12 @@ The production Docker image has built and deployed successfully. The Machine
 has connected to the production Discord Gateway, initialized SQLite on the
 mounted volume, and loaded the 21 application-owned rank emojis.
 
-The production Discord application has been created and configured for Guild
-Install. The production bot has not yet been installed into the community
-server. Consequently, production guild commands have not yet been registered
-or acceptance-tested in that server.
+The production Discord application is installed in the community server.
+Production guild commands have been registered, and the core commands have
+been acceptance-tested. The weekly scheduling feature remains on its feature
+branch until it passes local and CI tests, is merged, and deploys to Fly.
+After that deployment, production guild commands must be re-registered to add
+`/leaderboard-schedule`.
 
 ### Fly secrets
 
@@ -407,7 +462,7 @@ After installation:
 7. Confirm that the server administrator is comfortable with the initial
    open access policy for player add/remove commands.
 
-## Production status and launch checklist
+## Production status and maintenance
 
 ### Completed
 
@@ -430,19 +485,22 @@ After installation:
 - [x] Production bot connected to Discord Gateway
 - [x] Production application rank emojis synchronized and loaded
 - [x] Production SQLite database initialized on the Fly Volume
+- [x] Production bot installed in the community server
+- [x] Production guild commands registered and core commands acceptance-tested
+- [x] GitHub Actions deploy job runs after successful quality checks on `main`
 
-### Remaining before community launch
+### Recurring schedule feature branch
 
-- [ ] Verify the GitHub Actions deployment job is present and successfully
-      deploys only after the `quality` job passes on `main`. The GitHub
-      `production` environment and `FLY_API_TOKEN` secret have been configured.
-- [ ] Provide the production Discord installation link to the community server
-      administrator.
-- [ ] Have the administrator install the bot into the community server.
-- [ ] Confirm channel access and server integration settings.
-- [ ] Register production guild commands using `.env.production`.
-- [ ] Perform production acceptance testing with the administrator.
-- [ ] Announce availability to the community.
+- [x] Schema version 3 and `leaderboard_schedule` repository
+- [x] Weekly local-time scheduling domain and validation
+- [x] Croner scheduler with startup restoration and graceful shutdown
+- [x] Discord `/leaderboard-schedule` command family (Administrator by default)
+- [x] Rich/compact static scheduled-post publishing, top 20 only
+- [x] Manual test publication and execution-history reporting
+- [ ] Complete local Node.js 26 checks and schedule acceptance testing
+- [ ] Merge the scheduling feature and allow GitHub Actions to deploy it
+- [ ] Re-register production guild commands to publish `/leaderboard-schedule`
+- [ ] Configure and test the desired production weekly schedule
 
 ### Deferred operational improvements
 
@@ -479,6 +537,9 @@ treated as an independent off-provider backup.
 - Treat Slippi API responses as external and potentially unavailable: apply
   timeouts and validate response shapes.
 - Preserve successful cached profile data when Slippi is unavailable.
+- Persist schedule definitions in SQLite and reconstruct Croner jobs at startup.
+- Run only one active bot Machine against the SQLite database; no distributed
+  scheduler/locking design is implemented.
 - Suppress unintended mentions and escape profile-controlled display names
   before rendering Discord messages.
 - Keep production Discord secrets on Fly and deployment credentials in the

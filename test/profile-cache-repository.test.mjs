@@ -30,9 +30,9 @@ function withRepository(callback) {
   }
 }
 
-test('database migrates to schema version 2', () => {
+test('database migrates to schema version 3', () => {
   withRepository((_profiles, database) => {
-    assert.equal(database.pragma('user_version', { simple: true }), 2);
+    assert.equal(database.pragma('user_version', { simple: true }), 3);
   });
 });
 
@@ -70,7 +70,7 @@ test('upgrades a version-1 database without losing registered players', () => {
     const upgradedDatabase = openDatabase(databasePath);
 
     try {
-      assert.equal(upgradedDatabase.pragma('user_version', { simple: true }), 2);
+      assert.equal(upgradedDatabase.pragma('user_version', { simple: true }), 3);
       assert.equal(
         new PlayerRepository(upgradedDatabase).get('guild-1', 'MANG#0')?.connectCode,
         'MANG#0',

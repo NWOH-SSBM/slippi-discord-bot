@@ -1,9 +1,17 @@
 # Data model
 
-The initial schema stores only the community's player registrations. Slippi
-remains the source of truth for profile names and ratings; those values are
-retrieved by the Slippi integration rather than being treated as registration
-metadata.
+The application uses SQLite with three tables, introduced through ordered schema
+migrations. The database stores three different kinds of state:
+
+- `players`: which Slippi Connect Codes are registered in each Discord guild.
+- `slippi_profiles`: the last successfully retrieved profile data for a Connect
+  Code, shared across guilds.
+- `leaderboard_schedule`: the one recurring leaderboard schedule configured
+  for each guild.
+
+Slippi remains the source of truth for profile names, ratings, ranked records,
+and placement information. `slippi_profiles` is a persistent cache of the last
+successful response, not an independent source of player data.
 
 ## `players`
 
@@ -22,12 +30,84 @@ multi-guild feature require an immediate schema redesign.
 The actor's Discord ID is retained for basic accountability. Display names are
 not stored because they can change and are not needed to identify the actor.
 
+## `slippi_profiles`
+
+| Column                     | Type      | Meaning                                                      |
+| -------------------------- | --------- | ------------------------------------------------------------ |
+| `connect_code`             | `TEXT`    | Canonical Slippi Connect Code; primary key, case-insensitive |
+| `display_name`             | `TEXT`    | Most recently retrieved Slippi display name                  |
+| `rating`                   | `REAL`    | Last successfully retrieved ranked rating, if available      |
+| `rating_update_count`      | `INTEGER` | Slippi rating update count, if available                     |
+| `wins`                     | `INTEGER` | Ranked wins, if available                                    |
+| `losses`                   | `INTEGER` | Ranked losses, if available                                  |
+| `daily_global_placement`   | `INTEGER` | Slippi's daily global placement signal, if available         |
+| `daily_regional_placement` | `INTEGER` | Slippi's daily regional placement, if available              |
+| `continent`                | `TEXT`    | Slippi profile continent value, if available                 |
+| `fetched_at`               | `TEXT`    | UTC timestamp of the last successful profile fetch           |
+
+Profiles are keyed globally by Connect Code rather than by guild. If the same
+player is registered in more than one server, the application can reuse the
+same cached Slippi profile. The 30-minute refresh policy is implemented by the
+profile-cache/leaderboard services rather than by a SQLite expiration job.
+
+A failed, malformed, or unavailable Slippi response must not overwrite a
+previously successful cached profile. Rank is calculated from the cached
+rating, ranked-game count, and placement fields when a leaderboard is rendered;
+rank labels are not stored in this table.
+
+## `leaderboard_schedule`
+
+| Column                       | Type      | Meaning                                                        |
+| ---------------------------- | --------- | -------------------------------------------------------------- |
+| `id`                         | `INTEGER` | Internal schedule row identifier; primary key                  |
+| `guild_id`                   | `TEXT`    | Discord guild; unique, one schedule per guild                  |
+| `channel_id`                 | `TEXT`    | Text or announcement channel that receives scheduled posts     |
+| `frequency`                  | `TEXT`    | Recurrence type; currently constrained to `weekly`             |
+| `day_of_week`                | `INTEGER` | Weekday, Sunday = 0 through Saturday = 6                       |
+| `local_time`                 | `TEXT`    | Local wall-clock time in 24-hour `HH:MM` format                |
+| `time_zone`                  | `TEXT`    | IANA time-zone identifier, such as `America/New_York`          |
+| `format`                     | `TEXT`    | Scheduled output format: `rich` or `compact`                   |
+| `enabled`                    | `INTEGER` | `1` when active, `0` when paused                               |
+| `created_by_discord_user_id` | `TEXT`    | Discord user ID that originally created the schedule           |
+| `updated_by_discord_user_id` | `TEXT`    | Discord user ID that most recently changed the schedule        |
+| `created_at`                 | `TEXT`    | UTC ISO 8601 timestamp recorded when the schedule is created   |
+| `updated_at`                 | `TEXT`    | UTC timestamp of the most recent configuration/run update      |
+| `last_run_at`                | `TEXT`    | UTC timestamp of the most recent scheduled execution, if any   |
+| `last_run_status`            | `TEXT`    | `success`, `failure`, or `NULL` before the first scheduled run |
+| `last_error`                 | `TEXT`    | Most recent scheduled publication error, if one occurred       |
+
+The `UNIQUE(guild_id)` constraint enforces the current product decision of one
+schedule per Discord server. There is intentionally no `schedule_name` column.
+If multiple named schedules per server become useful, add them through a new
+versioned migration and replace the unique constraint with a composite unique
+constraint on `(guild_id, schedule_name)`.
+
+The saved recurrence is expressed as a local weekday, local wall-clock time,
+and IANA time zone. The next execution instant is not persisted as UTC because
+it is derived from those values and time-zone rules can change. Croner rebuilds
+process-local jobs from enabled rows when the Discord client becomes ready.
+Missed occurrences during downtime are skipped rather than replayed.
+
+The `idx_leaderboard_schedule_enabled` index supports loading enabled schedules
+at startup. Scheduled publication history is retained in the same row; manual
+`/leaderboard-schedule test` publications do not change scheduled-run history.
+
 ## Migrations
 
 The database uses SQLite's `PRAGMA user_version` to track schema versions.
 Schema changes should be added as ordered migrations; do not edit an already
 released migration in place. The application refuses to open a database whose
 schema version is newer than the version it supports.
+
+| Schema version | Tables introduced                                             |
+| -------------- | ------------------------------------------------------------- |
+| 1              | `players`                                                     |
+| 2              | `slippi_profiles`                                             |
+| 3              | `leaderboard_schedule` and `idx_leaderboard_schedule_enabled` |
+
+A new database is migrated through all versions in order. An existing version
+2 production database receives only the version 3 schedule migration, which
+preserves the player roster and cached Slippi profiles.
 
 ## SQLite operational settings
 
@@ -40,4 +120,6 @@ schema version is newer than the version it supports.
 WAL creates companion `-wal` and `-shm` files while the database is open. Back
 up using SQLite's backup API or a consistent filesystem snapshot; do not assume
 that copying only the main `.sqlite` file while the bot is running is a safe
-backup procedure.
+backup procedure. Independent off-provider backups are currently deferred by
+project decision; the initial deployment accepts the risk of losing the Fly
+Volume and rebuilding the relatively small community roster and profile cache.

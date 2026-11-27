@@ -22,15 +22,16 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",
+    "croner": "11.0.1",
     "discord.js": "^14.28.1"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.0.0",
     "prettier": "3.10.1",
+    "sharp": "^0.35.5",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3",
-    "sharp": "^0.35.5"
+    "typescript": "^5.9.3"
   },
   "allowScripts": {
     "better-sqlite3@13.2.0": true,

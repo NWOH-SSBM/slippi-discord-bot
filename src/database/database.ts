@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 
 export type SqliteDatabase = InstanceType<typeof Database>;
 
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 
 /**
  * Open the application's SQLite database, configure safe defaults, and apply
@@ -106,5 +106,57 @@ function migrate(database: SqliteDatabase): void {
 
     migration();
     currentVersion = 2;
+  }
+
+  if (currentVersion < 3) {
+    const migration = database.transaction(() => {
+      database.exec(`
+        CREATE TABLE leaderboard_schedule (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          guild_id TEXT NOT NULL UNIQUE,
+          channel_id TEXT NOT NULL,
+          frequency TEXT NOT NULL DEFAULT 'weekly'
+            CHECK (frequency = 'weekly'),
+          day_of_week INTEGER NOT NULL
+            CHECK (day_of_week BETWEEN 0 AND 6),
+          local_time TEXT NOT NULL
+            CHECK (
+              length(local_time) = 5
+              AND local_time GLOB '[0-2][0-9]:[0-5][0-9]'
+              AND CAST(substr(local_time, 1, 2) AS INTEGER) BETWEEN 0 AND 23
+            ),
+          time_zone TEXT NOT NULL,
+          format TEXT NOT NULL
+            CHECK (format IN ('rich', 'compact')),
+          enabled INTEGER NOT NULL DEFAULT 1
+            CHECK (enabled IN (0, 1)),
+          created_by_discord_user_id TEXT NOT NULL,
+          updated_by_discord_user_id TEXT NOT NULL,
+          created_at TEXT NOT NULL DEFAULT (
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          ),
+          updated_at TEXT NOT NULL DEFAULT (
+            strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+          ),
+          last_run_at TEXT,
+          last_run_status TEXT
+            CHECK (last_run_status IS NULL OR last_run_status IN ('success', 'failure')),
+          last_error TEXT,
+          CHECK (length(trim(guild_id)) BETWEEN 1 AND 64),
+          CHECK (length(trim(channel_id)) BETWEEN 1 AND 64),
+          CHECK (length(trim(time_zone)) BETWEEN 1 AND 64),
+          CHECK (length(trim(created_by_discord_user_id)) BETWEEN 1 AND 64),
+          CHECK (length(trim(updated_by_discord_user_id)) BETWEEN 1 AND 64)
+        );
+
+        CREATE INDEX idx_leaderboard_schedule_enabled
+          ON leaderboard_schedule (enabled);
+      `);
+
+      database.pragma('user_version = 3');
+    });
+
+    migration();
+    currentVersion = 3;
   }
 }

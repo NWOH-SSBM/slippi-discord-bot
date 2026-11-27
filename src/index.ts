@@ -1,5 +1,9 @@
 import { Client, Events, GatewayIntentBits, MessageFlags } from 'discord.js';
 import {
+  handleLeaderboardScheduleAutocomplete,
+  handleLeaderboardScheduleCommand,
+} from './commands/leaderboard-schedule.js';
+import {
   handleCompactLeaderboardCommand,
   handleLeaderboardButtonInteraction,
   handleLeaderboardCommand,
@@ -8,25 +12,38 @@ import { handlePlayerCommand } from './commands/player.js';
 import { config } from './config.js';
 import { isLeaderboardButtonCustomId } from './domain/leaderboard-pagination.js';
 import { openDatabase } from './database/database.js';
+import { LeaderboardScheduleRepository } from './database/leaderboard-schedule-repository.js';
 import { PlayerRepository } from './database/player-repository.js';
 import { ProfileCacheRepository } from './database/profile-cache-repository.js';
 import { LeaderboardSessionStore } from './services/leaderboard-session-store.js';
+import { LeaderboardSchedulePublisher } from './services/leaderboard-schedule-publisher.js';
+import { LeaderboardScheduler } from './services/leaderboard-scheduler.js';
 import { LeaderboardService } from './services/leaderboard-service.js';
 import { SlippiClient } from './services/slippi-client.js';
 
 const database = openDatabase(config.databasePath);
 const players = new PlayerRepository(database);
 const profiles = new ProfileCacheRepository(database);
+const schedules = new LeaderboardScheduleRepository(database);
 const slippi = new SlippiClient({ endpoint: config.slippiGraphqlEndpoint });
 const leaderboard = new LeaderboardService(players, profiles, slippi);
 const leaderboardSessions = new LeaderboardSessionStore();
 
 const client = new Client({
-  // Slash commands and components only require the Guilds intent.
+  // Slash commands, autocomplete, and components only require the Guilds intent.
   intents: [GatewayIntentBits.Guilds],
 });
 
-let applicationEmojiTags = new Map<string, string>();
+// Keep this Map instance stable because the scheduled publisher receives it by reference.
+const applicationEmojiTags = new Map<string, string>();
+const schedulePublisher = new LeaderboardSchedulePublisher(
+  client,
+  leaderboard,
+  applicationEmojiTags,
+);
+const scheduler = new LeaderboardScheduler(schedules, (schedule) =>
+  schedulePublisher.publish(schedule),
+);
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.info(`Logged in as ${readyClient.user.tag}.`);
@@ -34,15 +51,22 @@ client.once(Events.ClientReady, async (readyClient) => {
 
   try {
     const emojis = await readyClient.application.emojis.fetch();
-    applicationEmojiTags = new Map(
-      emojis.map((emoji) => [emoji.name, `<:${emoji.name}:${emoji.id}>`] as const),
-    );
+    applicationEmojiTags.clear();
+
+    for (const emoji of emojis.values()) {
+      if (emoji.name) {
+        applicationEmojiTags.set(emoji.name, `<:${emoji.name}:${emoji.id}>`);
+      }
+    }
+
     console.info(`Loaded ${applicationEmojiTags.size} application emoji(s).`);
   } catch (error) {
-    // The leaderboard remains usable with textual rank labels if emoji access
-    // is temporarily unavailable or the assets have not been synchronized.
+    // Scheduled and manually requested rich leaderboards remain usable with
+    // textual rank labels if application emoji access is temporarily unavailable.
     console.warn('Could not load Discord application rank emojis:', error);
   }
+
+  scheduler.start();
 });
 
 client.on(Events.Error, (error) => {
@@ -56,6 +80,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       leaderboardSessions,
       applicationEmojiTags,
     );
+    return;
+  }
+
+  if (interaction.isAutocomplete()) {
+    if (interaction.commandName === 'leaderboard-schedule') {
+      try {
+        await handleLeaderboardScheduleAutocomplete(interaction);
+      } catch (error) {
+        console.error('Failed to provide leaderboard schedule autocomplete:', error);
+        if (!interaction.responded) {
+          await interaction.respond([]).catch((respondError: unknown) => {
+            console.error('Could not acknowledge schedule autocomplete:', respondError);
+          });
+        }
+      }
+    }
     return;
   }
 
@@ -80,6 +120,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       case 'leaderboard-compact':
         await handleCompactLeaderboardCommand(interaction, leaderboard, leaderboardSessions);
+        break;
+
+      case 'leaderboard-schedule':
+        await handleLeaderboardScheduleCommand(interaction, schedules, scheduler);
         break;
 
       default:
@@ -115,25 +159,35 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-let shutdownStarted = false;
+let shutdownPromise: Promise<void> | undefined;
 
-function shutdown(signal: NodeJS.Signals): void {
-  if (shutdownStarted) {
-    return;
+async function shutdown(signal: NodeJS.Signals): Promise<void> {
+  if (shutdownPromise) {
+    return shutdownPromise;
   }
 
-  shutdownStarted = true;
-  console.info(`Received ${signal}; shutting down Discord client and database.`);
-  client.destroy();
-  database.close();
+  shutdownPromise = (async () => {
+    console.info(`Received ${signal}; stopping scheduled jobs and shutting down.`);
+    try {
+      await scheduler.shutdown();
+    } catch (error) {
+      console.error('Error while stopping the leaderboard scheduler:', error);
+    } finally {
+      client.destroy();
+      database.close();
+    }
+  })();
+
+  return shutdownPromise;
 }
 
-process.once('SIGINT', () => shutdown('SIGINT'));
-process.once('SIGTERM', () => shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
 
 try {
   await client.login(config.discordToken);
 } catch (error) {
+  await scheduler.shutdown();
   client.destroy();
   database.close();
   throw error;
